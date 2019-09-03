@@ -20,7 +20,8 @@ PYBIND11_MODULE(pypbn_ext, m) {
    py::enum_<Ipopt_initial_guess>(m, "IpoptInitialGuess", py::arithmetic())
       .value("Uniform", Ipopt_initial_guess::Uniform)
       .value("Random", Ipopt_initial_guess::Random)
-      .value("Current", Ipopt_initial_guess::Current);
+      .value("Current", Ipopt_initial_guess::Current)
+      .export_values();
 
    py::class_<FEMBVBinLinear>(m, "FEMBVBinLinear")
       .def(py::init<

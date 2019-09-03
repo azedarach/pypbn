@@ -47,7 +47,7 @@ def _initialize_fembv_bin_linear_parameters_random(n_features, n_components,
                                                    random_state=None):
     rng = check_random_state(random_state)
 
-    parameters = rng.random(size=(n_components, n_features))
+    parameters = rng.uniform(size=(n_components, n_features))
     row_sums = np.sum(parameters, axis=1)
     parameters = parameters / (2 * row_sums[:, np.newaxis])
 
@@ -113,8 +113,11 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                               update_affiliations=True,
                               tolerance=1e-6,
                               parameters_tolerance=1e-6,
+                              parameters_initialization=pypbn_ext.Uniform,
                               max_iterations=1000,
-                              verbose=0,
+                              max_parameters_iterations=1000,
+                              max_affiliations_iterations=1000,
+                              verbose=0, random_seed=0,
                               require_monotonic_cost_decrease=True):
     if verbose:
         print('*** FEM-BV-BIN linear: n_components = {:d}'.format(
@@ -123,14 +126,21 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
             'Iteration', 'Cost', 'Cost delta', 'Time'))
         print(60 * '-')
 
-    solver = pybnd_ext.FEMBVBinLinear(Y, X, parameters, affiliations)
-    solver.epsilon = epsilon
     if max_tv_norm is None:
-        solver.max_tv_norm = -1
+        max_tv_norm = -1
     else:
-        solver.max_tv_norm = max_tv_norm
+        max_tv_norm = max_tv_norm
 
-    old_cost = solver.cost()
+    solver = pypbn_ext.FEMBVBinLinear(
+        Y, X, parameters, affiliations,
+        epsilon=epsilon, max_tv_norm=max_tv_norm,
+        parameters_tolerance=parameters_tolerance,
+        parameters_initialization=parameters_initialization,
+        max_parameters_iterations=max_parameters_iterations,
+        max_affiliations_iterations=max_affiliations_iterations,
+        verbosity=(verbose > 1), random_seed=random_seed)
+
+    old_cost = solver.get_cost()
     new_cost = old_cost
 
     parameters_success = True
@@ -143,17 +153,27 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
 
         if update_parameters:
             parameters_success = solver.update_parameters()
-            new_cost = solver.cost()
-            if (new_cost > old_cost) and require_monotonic_cost_decrease:
+            new_cost = solver.get_cost()
+
+            cost_increased = ((new_cost > old_cost) and
+                              (np.abs(new_cost - old_cost) > tolerance))
+            if cost_increased and require_monotonic_cost_decrease:
                 raise RuntimeError(
-                    'fit cost increased after parameters update')
+                    'fit cost increased after parameters update: '
+                    '(old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e}'.format(
+                        old_cost, new_cost, new_cost - old_cost))
 
         if update_affiliations:
             affiliations_success = solver.update_affiliations()
-            new_cost = solver.cost()
-            if (new_cost > old_cost) and require_monotonic_cost_decrease:
+            new_cost = solver.get_cost()
+
+            cost_increased = ((new_cost > old_cost) and
+                              (np.abs(new_cost - old_cost) > tolerance))
+            if cost_increased and require_monotonic_cost_decrease:
                 raise RuntimeError(
-                    'fit cost increased after affiliations update')
+                    'fit cost increased after affiliations update: '
+                    '(old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e}'.format(
+                        old_cost, new_cost, new_cost - old_cost))
 
         cost_delta = new_cost - old_cost
 
@@ -169,15 +189,24 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                 print('*** Converged at iteration %d ***' % (n_iter + 1))
             break
 
-    return solver.get_parameters(), solver.get_affiliations(), n_iter
+    cost = solver.get_cost()
+    log_likelihood_bound = solver.get_log_likelihood_bound()
+
+    return (solver.get_parameters(), solver.get_affiliations(),
+            cost, log_likelihood_bound, n_iter, update_success)
 
 
 def fembv_bin_linear_fit(outcome, predictors, parameters=None,
                          affiliations=None,
                          n_components=None, epsilon=0, max_tv_norm=None,
                          update_parameters=True, update_affiliations=True,
-                         init=None, tolerance=1e-6, max_iterations=1000,
-                         verbose=0, random_state=None):
+                         init=None, tolerance=1e-6,
+                         parameters_tolerance=1e-6,
+                         parameters_initialization=pypbn_ext.Uniform,
+                         max_iterations=1000,
+                         max_parameters_iterations=1000,
+                         max_affiliations_iterations=1000,
+                         verbose=0, random_seed=0, random_state=None):
     Y = outcome
 
     if predictors.ndim == 1:
@@ -220,15 +249,21 @@ def fembv_bin_linear_fit(outcome, predictors, parameters=None,
         parameters, affiliations = _initialize_fembv_bin_linear(
             X, n_components, init=init, random_state=random_state)
 
-    parameters, weights, n_iter, update_success = _iterate_fembv_bin_linear(
+    result = _iterate_fembv_bin_linear(
         Y, X, parameters, affiliations,
         epsilon=epsilon, max_tv_norm=max_tv_norm,
         update_parameters=update_parameters,
-        update_affiliations=affiliations,
+        update_affiliations=update_affiliations,
         tolerance=tolerance,
         parameters_tolerance=parameters_tolerance,
+        parameters_initialization=parameters_initialization,
         max_iterations=max_iterations,
-        verbose=verbose)
+        max_parameters_iterations=max_parameters_iterations,
+        max_affiliations_iterations=max_affiliations_iterations,
+        verbose=verbose, random_seed=random_seed)
+
+    n_iter = result[-2]
+    update_success = result[-1]
 
     if n_iter == max_iterations and tolerance > 0:
         warnings.warn('Maximum number of iterations %d reached.' %
@@ -237,35 +272,52 @@ def fembv_bin_linear_fit(outcome, predictors, parameters=None,
     if not update_success:
         warnings.warn('Update of model parameters failed.', UserWarning)
 
-    return parameters, affiliations, n_iter
+    return result[:5]
 
 
 class FEMBVBinLinear(object):
     def __init__(self, n_components, epsilon=0, max_tv_norm=None,
-                 init=None, tolerance=1e-6, max_iterations=1000,
-                 verbose=0, random_state=None):
+                 init=None, tolerance=1e-6, parameters_tolerance=1e-6,
+                 parameters_initialization=pypbn_ext.Uniform,
+                 max_iterations=1000,
+                 max_parameters_iterations=1000,
+                 max_affiliations_iterations=1000,
+                 verbose=0, random_seed=0, random_state=None):
         self.n_components = n_components
         self.epsilon = epsilon
+        self.max_tv_norm = max_tv_norm
         self.init = init
         self.tolerance = tolerance
+        self.parameters_tolerance = parameters_tolerance
+        self.parameters_initialization = parameters_initialization
         self.max_iterations = max_iterations
+        self.max_parameters_iterations = max_parameters_iterations
+        self.max_affiliations_iterations = max_affiliations_iterations
         self.verbose = verbose
+        self.random_seed = random_seed
         self.random_state = random_state
 
     def fit_transform(self, outcomes, predictors, parameters=None,
                       affiliations=None):
-        parameters_, affiliations_, n_iter_ = fembv_bin_linear_fit(
+        parameters_, affiliations_, cost_, log_like_, n_iter_ = fembv_bin_linear_fit(
             outcomes, predictors, parameters=parameters,
             affiliations=affiliations,
             n_components=self.n_components,
             epsilon=self.epsilon, max_tv_norm=self.max_tv_norm,
             update_parameters=True, update_affiliations=True,
             init=self.init, tolerance=self.tolerance,
+            parameters_tolerance=self.parameters_tolerance,
+            parameters_initialization=self.parameters_initialization,
             max_iterations=self.max_iterations,
-            verbose=self.verbose, random_state=self.random_state)
+            max_parameters_iterations=self.max_parameters_iterations,
+            max_affiliations_iterations=self.max_affiliations_iterations,
+            verbose=self.verbose, random_seed=self.random_seed,
+            random_state=self.random_state)
 
-        self.n_components_ = parameters.shape[0]
+        self.n_components_ = parameters_.shape[0]
         self.parameters_ = parameters_
+        self.cost_ = cost_
+        self.log_likelihood_bound_ = log_like_
         self.n_iter_ = n_iter_
 
         return affiliations_
@@ -277,11 +329,18 @@ class FEMBVBinLinear(object):
     def transform(self, outcomes, predictors):
         check_is_fitted(self, 'n_components')
 
-        _, affiliations, _ = fembv_bin_linear_fit(
+        result = fembv_bin_linear_fit(
             outcomes, predictors, parameters=self.parameters_,
             n_components=self.n_components_,
             epsilon=self.epsilon, max_tv_norm=self.max_tv_norm,
             update_parameters=False, update_affiliations=True,
             init=self.init, tolerance=self.tolerance,
+            parameters_tolerance=self.parameters_tolerance,
+            parameters_initialization=self.parameters_initialization,
             max_iterations=self.max_iterations,
-            verbose=self.verbose, random_state=self.random_state)
+            max_parameters_iterations=self.max_parameters_iterations,
+            max_affiliations_iterations=self.max_affiliations_iterations,
+            verbose=self.verbose, random_seed=self.random_seed,
+            random_state=self.random_state)
+
+        return result[1]
