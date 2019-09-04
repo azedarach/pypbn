@@ -137,7 +137,7 @@ bool FEMBVBinLinear::update_affiliations()
    } else {
       affiliations_success = false;
    }
-      
+
    gamma_solver.get_affiliations(affiliations);
 
    return affiliations_success;

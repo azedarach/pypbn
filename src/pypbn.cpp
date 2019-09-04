@@ -4,6 +4,7 @@
 */
 
 #include "fembv_bin_linear.hpp"
+#include "femh1_bin_linear_mc.hpp"
 #include "local_linear_model_ipopt_solver.hpp"
 
 #include <Eigen/Core>
@@ -52,5 +53,41 @@ PYBIND11_MODULE(pypbn_ext, m) {
       .def("get_affiliations", &FEMBVBinLinear::get_affiliations,
          py::return_value_policy::copy)
       .def("get_cost", &FEMBVBinLinear::get_cost)
-      .def("get_log_likelihood_bound", &FEMBVBinLinear::get_log_likelihood_bound);
+      .def("get_log_likelihood_bound",
+           &FEMBVBinLinear::get_log_likelihood_bound);
+
+   py::class_<FEMH1BinLinearMC>(m, "FEMH1BinLinearMC")
+      .def(py::init<
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           double, double, double, double, bool, double,
+           Ipopt_initial_guess, int, int, int>(),
+           py::arg("outcomes"),
+           py::arg("predictors"),
+           py::arg("parameters"),
+           py::arg("affiliations"),
+           py::arg("epsilon_theta") = 0.0,
+           py::arg("epsilon_gamma") = 1e-6,
+           py::arg("sigma_theta") = 1e-3,
+           py::arg("sigma_gamma") = 1e-3,
+           py::arg("include_parameters") = true,
+           py::arg("parameters_tolerance") = 1e-4,
+           py::arg("parameters_initialization") = Ipopt_initial_guess::Uniform,
+           py::arg("max_parameters_iterations") = 1000,
+           py::arg("verbosity") = 0,
+           py::arg("random_seed") = 0)
+      .def("metropolis_step", &FEMH1BinLinearMC::metropolis_step)
+      .def("get_parameters", &FEMH1BinLinearMC::get_parameters,
+           py::return_value_policy::copy)
+      .def("get_affiliations", &FEMH1BinLinearMC::get_affiliations,
+           py::return_value_policy::copy)
+      .def("get_log_likelihood", &FEMH1BinLinearMC::get_log_likelihood)
+      .def("reset", &FEMH1BinLinearMC::reset)
+      .def("get_affiliations_acceptance_rate",
+           &FEMH1BinLinearMC::get_affiliations_acceptance_rate)
+      .def("get_model_acceptance_rates",
+           &FEMH1BinLinearMC::get_model_acceptance_rates,
+           py::return_value_policy::copy);
 }
