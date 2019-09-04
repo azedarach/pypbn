@@ -25,7 +25,6 @@ bool update_femh1_bin_parameters(
    return success;
 }
 
-
 Eigen::VectorXd softmax(const Eigen::VectorXd& x)
 {
    Eigen::VectorXd result = x.array().exp().matrix();
@@ -257,7 +256,7 @@ std::tuple<Eigen::MatrixXd, double> get_trial_log_affiliations(
       a_new, a_old, sigma_inverse);
    const double log_q_backward = log_normal_density(
       a_old, a_new, sigma_inverse);
-   const double delta_log_q = log_q_backward - log_q_forward;
+   const double delta_log_q = 0; //log_q_backward - log_q_forward;
 
    return std::make_tuple(proposal, delta_log_q);
 }
@@ -329,7 +328,12 @@ FEMH1BinLinearMC::FEMH1BinLinearMC(
 
    outcomes = outcomes_;
    predictors = predictors_;
-   log_affiliations = affiliations_.array().log().matrix();
+   if (n_components > 1) {
+      log_affiliations = affiliations_.array().log().matrix();
+   } else {
+      log_affiliations = Eigen::MatrixXd::Zero(n_components, n_samples);
+   }
+
    sigma_inverse = epsilon_gamma_ * Eigen::MatrixXd::Identity(
       n_components, n_components);
 
@@ -392,28 +396,32 @@ bool FEMH1BinLinearMC::metropolis_step()
          outcomes, predictors, models, log_affiliations, sigma_inverse);
    }
 
-   const std::tuple<Eigen::MatrixXd, double> log_affiliations_proposal =
-      get_trial_log_affiliations(log_affiliations, sigma_gamma, generator);
+   if (n_components > 1) {
+      const std::tuple<Eigen::MatrixXd, double> log_affiliations_proposal =
+         get_trial_log_affiliations(log_affiliations, sigma_gamma, generator);
 
-   const Eigen::MatrixXd& trial_log_affiliations = std::get<0>(
-      log_affiliations_proposal);
-   const double delta_log_q = std::get<1>(log_affiliations_proposal);
+      const Eigen::MatrixXd& trial_log_affiliations = std::get<0>(
+         log_affiliations_proposal);
+      const double delta_log_q = std::get<1>(log_affiliations_proposal);
 
-   const double next_log_density = log_target_density(
-      outcomes, predictors, models, trial_log_affiliations, sigma_inverse);
+      const double next_log_density = log_target_density(
+         outcomes, predictors, models, trial_log_affiliations, sigma_inverse);
 
-   const double log_acceptance = next_log_density - current_log_density
-      + delta_log_q;
+      const double log_acceptance = next_log_density - current_log_density
+         + delta_log_q;
 
-   const bool affiliations_accepted = check_acceptance(
-      log_acceptance, generator);
-   const double n_accepted = affiliations_acceptance_rate * chain_length;
-   if (affiliations_accepted) {
-      current_log_density = next_log_density;
-      log_affiliations = trial_log_affiliations;
-      affiliations_acceptance_rate = (1 + n_accepted) / (chain_length + 1);
+      const bool affiliations_accepted = check_acceptance(
+         log_acceptance, generator);
+      const double n_accepted = affiliations_acceptance_rate * chain_length;
+      if (affiliations_accepted) {
+         current_log_density = next_log_density;
+         log_affiliations = trial_log_affiliations;
+         affiliations_acceptance_rate = (1 + n_accepted) / (chain_length + 1);
+      } else {
+         affiliations_acceptance_rate = n_accepted / (chain_length + 1);
+      }
    } else {
-      affiliations_acceptance_rate = n_accepted / (chain_length + 1);
+      affiliations_acceptance_rate = 1;
    }
 
    ++chain_length;
