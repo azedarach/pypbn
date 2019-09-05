@@ -119,27 +119,32 @@ void add_log_affiliations_prior_gradient(
    Eigen::VectorXd& gradient)
 {
    const int n_components = log_affiliations.rows();
-   const int n_samples = log_affiliations.cols();
 
-   const int n_parameters = gradient.size();
+   // for n_components == 1 the affiliations sequence is
+   // fully constrained
+   if (n_components > 1) {
+      const int n_samples = log_affiliations.cols();
 
-   int gradient_index = n_parameters - n_components * n_samples;
+      const int n_parameters = gradient.size();
 
-   // NB assumes prior for initial values is uniform and
-   // independent of values, so only contribution to gradient
-   // comes from conditional densities for t = 2, ..., T
-   for (int t = 0; t < n_samples; ++t) {
-      if (t < n_samples - 1) {
-         const Eigen::VectorXd g = sigma_inverse * (
-            log_affiliations.col(t + 1) - log_affiliations.col(t));
-         gradient.segment(gradient_index, n_components) += g;
+      int gradient_index = n_parameters - n_components * n_samples;
+
+      // NB assumes prior for initial values is uniform and
+      // independent of values, so only contribution to gradient
+      // comes from conditional densities for t = 2, ..., T
+      for (int t = 0; t < n_samples; ++t) {
+         if (t < n_samples - 1) {
+            const Eigen::VectorXd g = sigma_inverse * (
+               log_affiliations.col(t + 1) - log_affiliations.col(t));
+            gradient.segment(gradient_index, n_components) += g;
+         }
+         if (t > 0) {
+            const Eigen::VectorXd g = sigma_inverse * (
+               log_affiliations.col(t) - log_affiliations.col(t - 1));
+            gradient.segment(gradient_index, n_components) -= g;
+         }
+         gradient_index += n_components;
       }
-      if (t > 0) {
-         const Eigen::VectorXd g = sigma_inverse * (
-            log_affiliations.col(t) - log_affiliations.col(t - 1));
-         gradient.segment(gradient_index, n_components) -= g;
-      }
-      gradient_index += n_components;
    }
 }
 
@@ -217,11 +222,14 @@ void add_log_likelihood_gradient(
          }
       }
 
-      gradient_index += n_components * t;
-      for (int j = 0; j < n_components; ++j) {
-         const double pj = gamma(j) * local_theta.col(j).dot(predictors.col(t));
+      if (n_components > 1) {
+         gradient_index += n_components * t;
+         for (int j = 0; j < n_components; ++j) {
+            const double pj = gamma(j) * local_theta.col(j).dot(
+               predictors.col(t));
 
-         gradient(gradient_index) += prefactor * (pj - gamma(j) * p);
+            gradient(gradient_index) += prefactor * (pj - gamma(j) * p);
+         }
       }
    }
 }
@@ -276,7 +284,9 @@ double log_target_density(const Eigen::VectorXd& outcomes,
       log_density += log_parameters_prior(models[i]);
    }
 
-   log_density += log_affiliations_prior(log_affiliations, sigma_inverse);
+   if (n_components > 1) {
+      log_density += log_affiliations_prior(log_affiliations, sigma_inverse);
+   }
 
    return log_density;
 }
@@ -299,8 +309,10 @@ void gradient_log_target_density(const Eigen::VectorXd& outcomes,
       add_log_parameters_prior_gradient(models[i], gradient);
    }
 
-   add_log_affiliations_prior_gradient(log_affiliations, sigma_inverse,
-                                       gradient);
+   if (n_components > 1) {
+      add_log_affiliations_prior_gradient(log_affiliations, sigma_inverse,
+                                          gradient);
+   }
 }
 
 void accept_positions(
@@ -321,10 +333,12 @@ void accept_positions(
       models[i].set_parameters(theta);
    }
 
-   for (int t = 0; t < n_samples; ++t) {
-      for (int i = 0; i < n_components; ++i) {
-         log_affiliations(i, t) = positions(position_index);
-         ++position_index;
+   if (n_components > 1) {
+      for (int t = 0; t < n_samples; ++t) {
+         for (int i = 0; i < n_components; ++i) {
+            log_affiliations(i, t) = positions(position_index);
+            ++position_index;
+         }
       }
    }
 }
@@ -348,9 +362,13 @@ void initialize_positions(
    const int n_components = models.size();
    const int n_samples = log_affiliations.cols();
 
-   int n_parameters = n_components * n_samples;
+   int n_parameters = 0;
    for (int i = 0; i < n_components; ++i) {
       n_parameters += models[i].get_number_of_parameters();
+   }
+
+   if (n_components > 1) {
+      n_parameters += n_components * n_samples;
    }
 
    if (positions.size() != n_parameters) {
@@ -367,10 +385,12 @@ void initialize_positions(
       }
    }
 
-   for (int t = 0; t < n_samples; ++t) {
-      for (int i = 0; i < n_components; ++i) {
-         positions(position_index) = log_affiliations(i, t);
-         ++position_index;
+   if (n_components > 1) {
+      for (int t = 0; t < n_samples; ++t) {
+         for (int i = 0; i < n_components; ++i) {
+            positions(position_index) = log_affiliations(i, t);
+            ++position_index;
+         }
       }
    }
 }
@@ -393,7 +413,67 @@ FEMH1BinLinearHMC::FEMH1BinLinearHMC(
    , chain_length(0)
    , acceptance_rate(0)
 {
+   const int n_samples = predictors_.cols();
+   const int n_components = parameters_.rows();
+   const int n_features = predictors_.rows();
 
+   if (affiliations_.cols() != n_samples) {
+      throw std::runtime_error(
+         "number of affiliation samples does not match "
+         "number of data samples");
+   }
+
+   if (affiliations_.rows() != n_components) {
+      throw std::runtime_error(
+         "number of affiliation series does not match "
+         "number of components");
+   }
+
+   if (parameters_.cols() != n_features) {
+      throw std::runtime_error(
+         "number of parameters does not match "
+         "number of features");
+   }
+
+   if (n_components > 1) {
+      log_affiliations = affiliations_.array().log().matrix();
+   } else {
+      log_affiliations = Eigen::MatrixXd::Zero(n_components, n_samples);
+   }
+
+   sigma_inverse = epsilon_gamma_ * Eigen::MatrixXd::Identity(
+      n_components, n_components);
+
+   models = std::vector<Local_linear_model>(n_components);
+   for (int i = 0; i < n_components; ++i) {
+      models[i] = Local_linear_model(n_features);
+      std::vector<double> theta(n_features);
+      for (int j = 0; j < n_features; ++j) {
+         theta[j] = parameters_(i, j);
+      }
+      models[i].set_parameters(theta);
+      models[i].epsilon = epsilon_theta_;
+   }
+
+   temp_models = models;
+   temp_log_affiliations = log_affiliations;
+
+   const int n_parameters = (n_components == 1 ?
+                             n_components * n_features :
+                             n_components * (n_features + n_samples));
+
+   positions = Eigen::VectorXd::Zero(n_parameters);
+   momenta = Eigen::VectorXd::Zero(n_parameters);
+   current_energy_gradient = Eigen::VectorXd::Zero(n_parameters);
+   new_energy_gradient = Eigen::VectorXd::Zero(n_parameters);
+
+   initialize_positions(models, log_affiliations, positions);
+
+   current_energy = log_target_density(
+      outcomes_, predictors_, models, log_affiliations, sigma_inverse);
+   gradient_log_target_density(outcomes_, predictors_, models_,
+                               log_affiliations_, sigma_inverse,
+                               current_energy_gradient);
 }
 
 bool FEMH1BinLinearHMC::hmc_step()
@@ -462,23 +542,6 @@ void FEMH1BinLinearHMC::reset()
 {
    chain_length = 0;
    affiliations_acceptance_rate = 0;
-}
-
-double FEMH1BinLinearHMC::evaluate_energy() const
-{
-   const int n_components = models.size();
-   const int n_samples = log_affiliations.cols();
-
-   std::vector<Local_linear_model> temp_models(models);
-   Eigen::MatrixXd temp_log_affiliations(n_components, n_samples);
-
-
-   return ;
-}
-
-void FEMH1BinLinearHMC::evaluate_energy_gradient() const
-{
-
 }
 
 Eigen::MatrixXd FEMH1BinLinearHMC::get_parameters() const
