@@ -4,7 +4,8 @@
 */
 
 #include "fembv_bin_linear.hpp"
-#include "femh1_bin_linear_mc.hpp"
+#include "femh1_bin_linear_hmc.hpp"
+#include "femh1_bin_linear_mh.hpp"
 #include "local_linear_model_ipopt_solver.hpp"
 
 #include <Eigen/Core>
@@ -56,7 +57,7 @@ PYBIND11_MODULE(pypbn_ext, m) {
       .def("get_log_likelihood_bound",
            &FEMBVBinLinear::get_log_likelihood_bound);
 
-   py::class_<FEMH1BinLinearMC>(m, "FEMH1BinLinearMC")
+   py::class_<FEMH1BinLinearMH>(m, "FEMH1BinLinearMH")
       .def(py::init<
            const Eigen::Ref<const Eigen::MatrixXd>&,
            const Eigen::Ref<const Eigen::MatrixXd>&,
@@ -78,16 +79,16 @@ PYBIND11_MODULE(pypbn_ext, m) {
            py::arg("max_parameters_iterations") = 1000,
            py::arg("verbosity") = 0,
            py::arg("random_seed") = 0)
-      .def("metropolis_step", &FEMH1BinLinearMC::metropolis_step)
-      .def("get_parameters", &FEMH1BinLinearMC::get_parameters,
+      .def("metropolis_step", &FEMH1BinLinearMH::metropolis_step)
+      .def("get_parameters", &FEMH1BinLinearMH::get_parameters,
            py::return_value_policy::copy)
-      .def("get_affiliations", &FEMH1BinLinearMC::get_affiliations,
+      .def("get_affiliations", &FEMH1BinLinearMH::get_affiliations,
            py::return_value_policy::copy)
-      .def("get_log_likelihood", &FEMH1BinLinearMC::get_log_likelihood)
-      .def("reset", &FEMH1BinLinearMC::reset)
+      .def("get_log_likelihood", &FEMH1BinLinearMH::get_log_likelihood)
+      .def("reset", &FEMH1BinLinearMH::reset)
       .def("get_affiliations_acceptance_rate",
-           &FEMH1BinLinearMC::get_affiliations_acceptance_rate)
+           &FEMH1BinLinearMH::get_affiliations_acceptance_rate)
       .def("get_model_acceptance_rates",
-           &FEMH1BinLinearMC::get_model_acceptance_rates,
+           &FEMH1BinLinearMH::get_model_acceptance_rates,
            py::return_value_policy::copy);
 }
