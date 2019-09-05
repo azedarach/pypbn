@@ -215,7 +215,7 @@ void add_log_likelihood_gradient(
 
       int gradient_index = 0;
       for (int j = 0; j < n_components; ++j) {
-         const int n_parameters = models[i].get_number_of_parameters();
+         const int n_parameters = models[j].get_number_of_parameters();
          for (int k = 0; k < n_parameters; ++k) {
             gradient(gradient_index) += prefactor * gamma(j) * predictors(k, t);
             ++gradient_index;
@@ -404,10 +404,11 @@ FEMH1BinLinearHMC::FEMH1BinLinearHMC(
    const Eigen::Ref<const Eigen::MatrixXd>& affiliations_,
    double epsilon_theta_, double epsilon_gamma_,
    int n_leapfrog_steps_, double leapfrog_step_size_,
-   int verbosity, int random_seed)
-   : outcomes(outcomes_)
+   int verbosity_, int random_seed)
+   : generator(random_seed)
+   , outcomes(outcomes_)
    , predictors(predictors_)
-   , generator(random_seed)
+   , verbosity(verbosity_)
    , n_leapfrog_steps(n_leapfrog_steps_)
    , leapfrog_step_size(leapfrog_step_size_)
    , chain_length(0)
@@ -466,18 +467,20 @@ FEMH1BinLinearHMC::FEMH1BinLinearHMC(
    momenta = Eigen::VectorXd::Zero(n_parameters);
    current_energy_gradient = Eigen::VectorXd::Zero(n_parameters);
    new_energy_gradient = Eigen::VectorXd::Zero(n_parameters);
-
-   initialize_positions(models, log_affiliations, positions);
-
-   current_energy = log_target_density(
-      outcomes_, predictors_, models, log_affiliations, sigma_inverse);
-   gradient_log_target_density(outcomes_, predictors_, models_,
-                               log_affiliations_, sigma_inverse,
-                               current_energy_gradient);
 }
 
 bool FEMH1BinLinearHMC::hmc_step()
 {
+   if (chain_length == 0) {
+      initialize_positions(models, log_affiliations, positions);
+
+      current_energy = log_target_density(
+         outcomes, predictors, models, log_affiliations, sigma_inverse);
+      gradient_log_target_density(outcomes, predictors, models,
+                                  log_affiliations, sigma_inverse,
+                                  current_energy_gradient);
+   }
+
    initialize_momenta(momenta, generator);
 
    const double current_H = current_energy + 0.5 * momenta.squaredNorm();
@@ -505,7 +508,7 @@ bool FEMH1BinLinearHMC::hmc_step()
 
    const double new_energy = log_target_density(
       outcomes, predictors, temp_models,
-      temp_log_affiliations, sigma_inverse)
+      temp_log_affiliations, sigma_inverse);
    const double new_H = new_energy + 0.5 * momenta.squaredNorm();
    const double delta_H = new_H - current_H;
 
@@ -536,12 +539,14 @@ bool FEMH1BinLinearHMC::hmc_step()
    }
 
    ++chain_length;
+
+   return true;
 }
 
 void FEMH1BinLinearHMC::reset()
 {
    chain_length = 0;
-   affiliations_acceptance_rate = 0;
+   acceptance_rate = 0;
 }
 
 Eigen::MatrixXd FEMH1BinLinearHMC::get_parameters() const

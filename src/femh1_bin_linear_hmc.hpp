@@ -12,6 +12,15 @@ namespace pypbn {
 
 class FEMH1BinLinearHMC {
 public:
+   FEMH1BinLinearHMC(
+      const Eigen::Ref<const Eigen::MatrixXd>&,
+      const Eigen::Ref<const Eigen::MatrixXd>&,
+      const Eigen::Ref<const Eigen::MatrixXd>&,
+      const Eigen::Ref<const Eigen::MatrixXd>&,
+      double, double,
+      int, double,
+      int, int);
+
    Eigen::MatrixXd get_parameters() const;
    Eigen::MatrixXd get_affiliations() const;
    double get_log_likelihood() const;
@@ -37,11 +46,12 @@ private:
    Eigen::MatrixXd temp_log_affiliations;
 
    double current_energy{0};
-   Eigen::MatrixXd positions;
-   Eigen::MatrixXd momenta;
-   Eigen::MatrixXd current_energy_gradient;
-   Eigen::MatrixXd new_energy_gradient;
+   Eigen::VectorXd positions;
+   Eigen::VectorXd momenta;
+   Eigen::VectorXd current_energy_gradient;
+   Eigen::VectorXd new_energy_gradient;
 
+   int verbosity{0};
    int n_leapfrog_steps{10};
    double leapfrog_step_size{0.001};
    int chain_length{0};
