@@ -1,6 +1,8 @@
 #ifndef PYPBN_FEMH1_BIN_LINEAR_HMC_HPP_INCLUDED
 #define PYPBN_FEMH1_BIN_LINEAR_HMC_HPP_INCLUDED
 
+#include "local_linear_model.hpp"
+
 #include <Eigen/Core>
 
 #include <random>
