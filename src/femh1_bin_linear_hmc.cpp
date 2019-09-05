@@ -404,8 +404,8 @@ FEMH1BinLinearHMC::FEMH1BinLinearHMC(
    const Eigen::Ref<const Eigen::MatrixXd>& affiliations_,
    double epsilon_theta_, double epsilon_gamma_,
    int n_leapfrog_steps_, double leapfrog_step_size_,
-   int verbosity_, int random_seed)
-   : generator(random_seed)
+   int verbosity_, int random_seed_)
+   : generator(random_seed_)
    , outcomes(outcomes_)
    , predictors(predictors_)
    , verbosity(verbosity_)

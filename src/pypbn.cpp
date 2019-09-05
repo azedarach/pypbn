@@ -91,4 +91,30 @@ PYBIND11_MODULE(pypbn_ext, m) {
       .def("get_model_acceptance_rates",
            &FEMH1BinLinearMH::get_model_acceptance_rates,
            py::return_value_policy::copy);
+
+   py::class_<FEMH1BinLinearHMC>(m, "FEMH1BinLinearHMC")
+      .def(py::init<
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::MatrixXd>&,
+           double, double, int, double, int, int>(),
+           py::arg("outcomes"),
+           py::arg("predictors"),
+           py::arg("parameters"),
+           py::arg("affiliations"),
+           py::arg("epsilon_theta") = 0.0,
+           py::arg("epsilon_gamma") = 1e-6,
+           py::arg("n_leapfrog_steps") = 10,
+           py::arg("leapfrog_step_size") = 0.001,
+           py::arg("verbosity") = 0,
+           py::arg("random_seed") = 0)
+      .def("hmc_step", &FEMH1BinLinearHMC::hmc_step)
+      .def("get_parameters", &FEMH1BinLinearHMC::get_parameters,
+           py::return_value_policy::copy)
+      .def("get_affiliations", &FEMH1BinLinearHMC::get_affiliations,
+           py::return_value_policy::copy)
+      .def("get_log_likelihood", &FEMH1BinLinearHMC::get_log_likelihood)
+      .def("reset", &FEMH1BinLinearHMC::reset)
+      .def("get_acceptance_rate", &FEMH1BinLinearHMC::get_acceptance_rate);
 }
