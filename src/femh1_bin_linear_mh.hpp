@@ -1,22 +1,25 @@
-#ifndef PYPBN_FEMH1_BIN_LINEAR_MC_HPP_INCLUDED
-#define PYPBN_FEMH1_BIN_LINEAR_MC_HPP_INCLUDED
+#ifndef PYPBN_FEMH1_BIN_LINEAR_MH_HPP_INCLUDED
+#define PYPBN_FEMH1_BIN_LINEAR_MH_HPP_INCLUDED
 
 #include "local_linear_model_ipopt_solver.hpp"
 
 #include <Eigen/Core>
 
+#include <random>
+#include <vector>
+
 namespace pypbn {
 
-class FEMH1BinLinearMC {
+class FEMH1BinLinearMH {
 public:
-   FEMH1BinLinearMC(
+   FEMH1BinLinearMH(
       const Eigen::Ref<const Eigen::MatrixXd>&,
       const Eigen::Ref<const Eigen::MatrixXd>&,
       const Eigen::Ref<const Eigen::MatrixXd>&,
       const Eigen::Ref<const Eigen::MatrixXd>&,
       double, double, double, double, bool, double,
       Ipopt_initial_guess, int, int, int);
-   ~FEMH1BinLinearMC() = default;
+   ~FEMH1BinLinearMH() = default;
 
    Eigen::MatrixXd get_parameters() const;
    Eigen::MatrixXd get_affiliations() const;

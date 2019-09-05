@@ -25,7 +25,8 @@ add_subdirectory(pybind11)
 pybind11_add_module(pypbn_ext
     src/clpsimplex_affiliations_solver.cpp
     src/fembv_bin_linear.cpp
-    src/femh1_bin_linear_mc.cpp
+    src/femh1_bin_linear_hmc.cpp
+    src/femh1_bin_linear_mh.cpp
     src/linear_constraint.cpp
     src/local_linear_model.cpp
     src/local_linear_model_ipopt_solver.cpp

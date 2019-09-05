@@ -1,4 +1,4 @@
-#include "femh1_bin_linear_mc.hpp"
+#include "femh1_bin_linear_mh.hpp"
 
 #include <Eigen/LU>
 
@@ -240,23 +240,8 @@ std::tuple<Eigen::MatrixXd, double> get_trial_log_affiliations(
    const Eigen::MatrixXd proposal =
       log_affiliations + perturbation;
 
-   Eigen::VectorXd a_new(n_components * n_samples);
-   Eigen::VectorXd a_old(n_components * n_samples);
-
-   for (int i = 0; i < n_components; ++i) {
-      a_old.segment(i * n_samples, n_samples) = log_affiliations.row(i);
-      a_new.segment(i * n_samples, n_samples) = proposal.row(i);
-   }
-
-   const Eigen::MatrixXd sigma_inverse(
-      (1. / sigma) * Eigen::MatrixXd::Identity(
-         n_components * n_samples, n_components * n_samples));
-
-   const double log_q_forward = log_normal_density(
-      a_new, a_old, sigma_inverse);
-   const double log_q_backward = log_normal_density(
-      a_old, a_new, sigma_inverse);
-   const double delta_log_q = 0; //log_q_backward - log_q_forward;
+   // proposal density is symmetric
+   const double delta_log_q = 0;
 
    return std::make_tuple(proposal, delta_log_q);
 }
@@ -278,7 +263,7 @@ bool check_acceptance(double log_acceptance_prob, Generator& generator)
 
 } // anonymous namespace
 
-FEMH1BinLinearMC::FEMH1BinLinearMC(
+FEMH1BinLinearMH::FEMH1BinLinearMH(
    const Eigen::Ref<const Eigen::MatrixXd>& outcomes_,
    const Eigen::Ref<const Eigen::MatrixXd>& predictors_,
    const Eigen::Ref<const Eigen::MatrixXd>& parameters_,
@@ -349,7 +334,7 @@ FEMH1BinLinearMC::FEMH1BinLinearMC(
    }
 }
 
-bool FEMH1BinLinearMC::metropolis_step()
+bool FEMH1BinLinearMH::metropolis_step()
 {
    const int n_components = models.size();
    bool success = true;
@@ -429,7 +414,7 @@ bool FEMH1BinLinearMC::metropolis_step()
    return success;
 }
 
-void FEMH1BinLinearMC::reset()
+void FEMH1BinLinearMH::reset()
 {
    chain_length = 0;
    affiliations_acceptance_rate = 0;
@@ -440,7 +425,7 @@ void FEMH1BinLinearMC::reset()
    }
 }
 
-Eigen::MatrixXd FEMH1BinLinearMC::get_parameters() const
+Eigen::MatrixXd FEMH1BinLinearMH::get_parameters() const
 {
    const int n_components = models.size();
    const int n_features = predictors.rows();
@@ -456,7 +441,7 @@ Eigen::MatrixXd FEMH1BinLinearMC::get_parameters() const
    return parameters;
 }
 
-Eigen::MatrixXd FEMH1BinLinearMC::get_affiliations() const
+Eigen::MatrixXd FEMH1BinLinearMH::get_affiliations() const
 {
    const int n_components = log_affiliations.rows();
    const int n_samples = log_affiliations.cols();
@@ -469,12 +454,12 @@ Eigen::MatrixXd FEMH1BinLinearMC::get_affiliations() const
    return affiliations;
 }
 
-double FEMH1BinLinearMC::get_log_likelihood() const
+double FEMH1BinLinearMH::get_log_likelihood() const
 {
    return log_likelihood(outcomes, predictors, models, log_affiliations);
 }
 
-double FEMH1BinLinearMC::get_model_acceptance_rate(int i) const
+double FEMH1BinLinearMH::get_model_acceptance_rate(int i) const
 {
    const int n_components = models.size();
 
@@ -485,7 +470,7 @@ double FEMH1BinLinearMC::get_model_acceptance_rate(int i) const
    return model_acceptance_rates[i];
 }
 
-bool FEMH1BinLinearMC::update_parameters()
+bool FEMH1BinLinearMH::update_parameters()
 {
    const Eigen::MatrixXd affiliations(get_affiliations());
 
