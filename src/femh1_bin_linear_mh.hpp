@@ -1,6 +1,7 @@
 #ifndef PYPBN_FEMH1_BIN_LINEAR_MH_HPP_INCLUDED
 #define PYPBN_FEMH1_BIN_LINEAR_MH_HPP_INCLUDED
 
+#include "femh1_bin_linear_distributions.hpp"
 #include "local_linear_model_ipopt_solver.hpp"
 
 #include <Eigen/Core>
@@ -13,10 +14,10 @@ namespace pypbn {
 class FEMH1BinLinearMH {
 public:
    FEMH1BinLinearMH(
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
+      const Eigen::Ref<const Eigen::VectorXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
       double, double, double, double, bool, double,
       Ipopt_initial_guess, int, int, int);
    ~FEMH1BinLinearMH() = default;
@@ -38,13 +39,18 @@ public:
    }
 
 private:
+   using Parameters_prior = FEMH1BinLinear_parameters_exponential_prior;
+   using Affiliations_prior = FEMH1BinLinear_softmax_affiliations_normal_prior;
+
    Local_linear_model_ipopt_solver theta_solver;
    std::mt19937 generator;
 
    Eigen::VectorXd outcomes;
    Eigen::MatrixXd predictors;
    Eigen::MatrixXd distances;
-   Eigen::MatrixXd sigma_inverse;
+
+   Parameters_prior parameters_prior{};
+   Affiliations_prior softmax_affiliations_prior{};
 
    std::vector<Local_linear_model> models;
    Eigen::MatrixXd log_affiliations;

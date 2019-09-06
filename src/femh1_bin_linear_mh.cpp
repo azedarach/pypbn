@@ -1,6 +1,5 @@
 #include "femh1_bin_linear_mh.hpp"
-
-#include <Eigen/LU>
+#include "densities.hpp"
 
 #include <cmath>
 
@@ -25,168 +24,26 @@ bool update_femh1_bin_parameters(
    return success;
 }
 
-Eigen::VectorXd softmax(const Eigen::VectorXd& x)
-{
-   Eigen::VectorXd result = x.array().exp().matrix();
-   const double norm = result.sum();
-   return result / norm;
-}
-
-double inverse_simplex_volume(int np1)
-{
-   double fact = 1.;
-   for (int i = 2; i <= np1; ++i) {
-      fact *= i;
-   }
-   return fact;
-}
-
-double log_dirichlet_density(const Eigen::VectorXd& x,
-                             const Eigen::VectorXd& alpha,
-                             double tolerance = 1e-10)
-{
-   const int n_dims = x.size();
-
-   double sum = 0.;
-   for (int i = 0; i < n_dims; ++i) {
-      if (x(i) <= 0 || x(i) >= 1) {
-         return -std::numeric_limits<double>::max();
-      }
-      sum += x(i);
-   }
-
-   if (std::abs(sum - 1) > tolerance) {
-      return -std::numeric_limits<double>::max();
-   }
-
-   double result = 0;
-
-   for (int i = 0; i < n_dims; ++i) {
-      result += ((alpha(i) - 1.) * std::log(x(i))
-                 - std::lgamma(alpha(i)));
-   }
-
-   result += std::lgamma(alpha.sum());
-
-   return result;
-}
-
-double log_normal_density(const Eigen::VectorXd& x, const Eigen::VectorXd& mu,
-                          const Eigen::MatrixXd& sigma_inverse)
-{
-   constexpr double pi = 4.0 * std::atan(1);
-
-   const int n_dims = x.size();
-   const double det_sigma_inverse = sigma_inverse.determinant();
-   const double residual = (x - mu).dot(sigma_inverse * (x - mu));
-
-   return -0.5 * n_dims * std::log(2. * pi) + 0.5 * std::log(det_sigma_inverse)
-      - 0.5 * residual;
-}
-
-double log_parameters_prior(const Local_linear_model& model)
-{
-   const std::vector<double>& parameters = model.get_parameters();
-   const int n_parameters = parameters.size();
-
-   double sum = 0.0;
-   for (int i = 0; i < n_parameters; ++i) {
-      if (parameters[i] < 0) {
-         return -std::numeric_limits<double>::max();
-      }
-      sum += parameters[i];
-   }
-   if (sum <= 0 || sum >= 1) {
-      return -std::numeric_limits<double>::max();
-   }
-
-   return inverse_simplex_volume(n_parameters);
-}
-
-double log_affiliations_prior(const Eigen::MatrixXd& log_affiliations,
-                              const Eigen::MatrixXd& sigma_inverse)
-{
-   // Dirichlet prior for t = 1 combined with conditional
-   // log-normal distributions for t = 2, ..., T
-   const int n_samples = log_affiliations.cols();
-   const int n_components = log_affiliations.rows();
-
-   const Eigen::VectorXd alpha(Eigen::VectorXd::Ones(n_components));
-   const Eigen::VectorXd gamma(softmax(log_affiliations.col(0)));
-   double result = log_dirichlet_density(gamma, alpha);
-
-   for (int t = 1; t < n_samples; ++t) {
-      result += log_normal_density(log_affiliations.col(t),
-                                   log_affiliations.col(t - 1),
-                                   sigma_inverse);
-   }
-
-   return result;
-}
-
-double log_likelihood(const Eigen::VectorXd& outcomes,
-                      const Eigen::MatrixXd& predictors,
-                      const std::vector<Local_linear_model>& models,
-                      const Eigen::MatrixXd& log_affiliations)
-{
-   double log_like = 0;
-
-   const int n_features = predictors.rows();
-   const int n_samples = log_affiliations.cols();
-   const int n_components = models.size();
-
-   for (int t = 0; t < n_samples; ++t) {
-      Eigen::VectorXd gamma(softmax(log_affiliations.col(t)));
-
-      Eigen::VectorXd theta(Eigen::VectorXd::Zero(n_features));
-      for (int i = 0; i < n_components; ++i) {
-         const auto& parameters = models[i].get_parameters();
-         const int n_parameters = parameters.size();
-         for (int j = 0; j < n_parameters; ++j) {
-            theta(j) += gamma(i) * parameters[j];
-         }
-      }
-
-      const double p = theta.dot(predictors.col(t));
-
-      log_like += outcomes(t) * std::log(p)
-         + (1 - outcomes(t)) * std::log(1 - p);
-   }
-
-   return log_like;
-}
-
-double penalised_log_likelihood(const Eigen::VectorXd& outcomes,
-                                const Eigen::MatrixXd& predictors,
-                                const std::vector<Local_linear_model>& models,
-                                const Eigen::MatrixXd& log_affiliations)
-{
-   double log_like = log_likelihood(outcomes, predictors, models,
-                                    log_affiliations);
-
-   const int n_components = models.size();
-   for (int i = 0; i < n_components; ++i) {
-      log_like -= models[i].regularization();
-   }
-
-   return log_like;
-}
-
+template <class Parameters_prior, class Softmax_affiliations_prior>
 double log_target_density(const Eigen::VectorXd& outcomes,
                           const Eigen::MatrixXd& predictors,
                           const std::vector<Local_linear_model>& models,
-                          const Eigen::MatrixXd& log_affiliations,
-                          const Eigen::MatrixXd& sigma_inverse)
+                          const Eigen::MatrixXd& softmax_affiliations,
+                          const Parameters_prior& parameters_prior,
+                          const Softmax_affiliations_prior& affiliations_prior)
 {
    double log_density =
-      penalised_log_likelihood(outcomes, predictors, models, log_affiliations);
+      femh1_bin_linear_log_likelihood(outcomes, predictors, models,
+                                      softmax_affiliations);
 
    const std::size_t n_components = models.size();
    for (std::size_t i = 0; i < n_components; ++i) {
-      log_density += log_parameters_prior(models[i]);
+      log_density += parameters_prior.log_value(models[i]);
    }
 
-   log_density += log_affiliations_prior(log_affiliations, sigma_inverse);
+   if (n_components > 1) {
+      log_density += affiliations_prior.log_value(softmax_affiliations);
+   }
 
    return log_density;
 }
@@ -264,10 +121,10 @@ bool check_acceptance(double log_acceptance_prob, Generator& generator)
 } // anonymous namespace
 
 FEMH1BinLinearMH::FEMH1BinLinearMH(
-   const Eigen::Ref<const Eigen::MatrixXd>& outcomes_,
-   const Eigen::Ref<const Eigen::MatrixXd>& predictors_,
-   const Eigen::Ref<const Eigen::MatrixXd>& parameters_,
-   const Eigen::Ref<const Eigen::MatrixXd>& affiliations_,
+   const Eigen::Ref<const Eigen::VectorXd> outcomes_,
+   const Eigen::Ref<const Eigen::MatrixXd> predictors_,
+   const Eigen::Ref<const Eigen::MatrixXd> parameters_,
+   const Eigen::Ref<const Eigen::MatrixXd> affiliations_,
    double epsilon_theta_, double epsilon_gamma_,
    double sigma_theta_, double sigma_gamma_,
    bool include_parameters_, double parameters_tolerance,
@@ -311,6 +168,11 @@ FEMH1BinLinearMH::FEMH1BinLinearMH(
    theta_solver.set_initialization_method(parameters_initialization);
    theta_solver.initialize();
 
+   parameters_prior.alpha = epsilon_theta_;
+   softmax_affiliations_prior.alpha = Eigen::VectorXd::Ones(n_components);
+   softmax_affiliations_prior.inverse_covariance = epsilon_gamma_
+      * Eigen::MatrixXd::Identity(n_components, n_components);
+
    outcomes = outcomes_;
    predictors = predictors_;
    if (n_components > 1) {
@@ -318,9 +180,6 @@ FEMH1BinLinearMH::FEMH1BinLinearMH(
    } else {
       log_affiliations = Eigen::MatrixXd::Zero(n_components, n_samples);
    }
-
-   sigma_inverse = epsilon_gamma_ * Eigen::MatrixXd::Identity(
-      n_components, n_components);
 
    models = std::vector<Local_linear_model>(n_components);
    for (int i = 0; i < n_components; ++i) {
@@ -340,7 +199,8 @@ bool FEMH1BinLinearMH::metropolis_step()
    bool success = true;
 
    double current_log_density = log_target_density(
-      outcomes, predictors, models, log_affiliations, sigma_inverse);
+      outcomes, predictors, models, log_affiliations,
+      parameters_prior, softmax_affiliations_prior);
 
    if (include_parameters) {
       for (int i = 0; i < n_components; ++i) {
@@ -355,7 +215,8 @@ bool FEMH1BinLinearMH::metropolis_step()
          models[i].set_parameters(trial_parameters);
 
          const double next_log_density = log_target_density(
-            outcomes, predictors, models, log_affiliations, sigma_inverse);
+            outcomes, predictors, models, log_affiliations,
+            parameters_prior, softmax_affiliations_prior);
 
          const double log_acceptance = next_log_density - current_log_density
             + delta_log_q;
@@ -378,7 +239,8 @@ bool FEMH1BinLinearMH::metropolis_step()
       }
 
       current_log_density = log_target_density(
-         outcomes, predictors, models, log_affiliations, sigma_inverse);
+         outcomes, predictors, models, log_affiliations,
+         parameters_prior, softmax_affiliations_prior);
    }
 
    if (n_components > 1) {
@@ -390,7 +252,8 @@ bool FEMH1BinLinearMH::metropolis_step()
       const double delta_log_q = std::get<1>(log_affiliations_proposal);
 
       const double next_log_density = log_target_density(
-         outcomes, predictors, models, trial_log_affiliations, sigma_inverse);
+         outcomes, predictors, models, trial_log_affiliations,
+         parameters_prior, softmax_affiliations_prior);
 
       const double log_acceptance = next_log_density - current_log_density
          + delta_log_q;
@@ -446,7 +309,8 @@ Eigen::MatrixXd FEMH1BinLinearMH::get_affiliations() const
    const int n_components = log_affiliations.rows();
    const int n_samples = log_affiliations.cols();
 
-   Eigen::MatrixXd affiliations(n_components, n_samples);
+   Eigen::MatrixXd affiliations(
+      Eigen::MatrixXd::Zero(n_components, n_samples));
    for (int t = 0; t < n_samples; ++t) {
       affiliations.col(t) = softmax(log_affiliations.col(t));
    }
@@ -456,7 +320,8 @@ Eigen::MatrixXd FEMH1BinLinearMH::get_affiliations() const
 
 double FEMH1BinLinearMH::get_log_likelihood() const
 {
-   return log_likelihood(outcomes, predictors, models, log_affiliations);
+   return femh1_bin_linear_log_likelihood(
+      outcomes, predictors, models, log_affiliations);
 }
 
 double FEMH1BinLinearMH::get_model_acceptance_rate(int i) const

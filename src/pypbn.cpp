@@ -27,10 +27,10 @@ PYBIND11_MODULE(pypbn_ext, m) {
 
    py::class_<FEMBVBinLinear>(m, "FEMBVBinLinear")
       .def(py::init<
-            const Eigen::Ref<const Eigen::MatrixXd>&,
-            const Eigen::Ref<const Eigen::MatrixXd>&,
-            const Eigen::Ref<const Eigen::MatrixXd>&,
-            const Eigen::Ref<const Eigen::MatrixXd>&,
+            const Eigen::Ref<const Eigen::VectorXd>,
+            const Eigen::Ref<const Eigen::MatrixXd>,
+            const Eigen::Ref<const Eigen::MatrixXd>,
+            const Eigen::Ref<const Eigen::MatrixXd>,
             double, double, double,
             Ipopt_initial_guess,
             int, int,
@@ -59,10 +59,10 @@ PYBIND11_MODULE(pypbn_ext, m) {
 
    py::class_<FEMH1BinLinearMH>(m, "FEMH1BinLinearMH")
       .def(py::init<
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::VectorXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
            double, double, double, double, bool, double,
            Ipopt_initial_guess, int, int, int>(),
            py::arg("outcomes"),
@@ -94,10 +94,10 @@ PYBIND11_MODULE(pypbn_ext, m) {
 
    py::class_<FEMH1BinLinearHMC>(m, "FEMH1BinLinearHMC")
       .def(py::init<
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
-           const Eigen::Ref<const Eigen::MatrixXd>&,
+           const Eigen::Ref<const Eigen::VectorXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
+           const Eigen::Ref<const Eigen::MatrixXd>,
            double, double, int, double, int, int>(),
            py::arg("outcomes"),
            py::arg("predictors"),

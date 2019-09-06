@@ -54,10 +54,10 @@ bool update_fembv_bin_parameters(
 } // anonymous namespace
 
 FEMBVBinLinear::FEMBVBinLinear(
-   const Eigen::Ref<const Eigen::MatrixXd>& outcomes_,
-   const Eigen::Ref<const Eigen::MatrixXd>& predictors_,
-   const Eigen::Ref<const Eigen::MatrixXd>& parameters_,
-   const Eigen::Ref<const Eigen::MatrixXd>& affiliations_,
+   const Eigen::Ref<const Eigen::VectorXd> outcomes_,
+   const Eigen::Ref<const Eigen::MatrixXd> predictors_,
+   const Eigen::Ref<const Eigen::MatrixXd> parameters_,
+   const Eigen::Ref<const Eigen::MatrixXd> affiliations_,
    double epsilon, double max_tv_norm, double parameters_tolerance,
    Ipopt_initial_guess parameters_initialization,
    int max_parameters_iterations, int max_affiliations_iterations,

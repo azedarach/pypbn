@@ -149,29 +149,30 @@ def _fit_femh1_bin_linear_hmc(Y, X, parameters, affiliations,
         average_time = ((step_time + n_steps * average_time) /
                         (n_steps + 1))
 
-        parameters = stepper.get_parameters()
-        affiliations = stepper.get_affiliations()
+        current_parameters = stepper.get_parameters()
+        current_affiliations = stepper.get_affiliations()
 
         log_like = stepper.get_log_likelihood()
         acceptance_rate = stepper.get_acceptance_rate()
 
         if n_steps / chain_length >= burn_in_fraction:
-            average_parameters = ((parameters + n_steps * average_parameters) /
+            average_parameters = ((current_parameters + n_steps * average_parameters) /
                                   (n_steps + 1))
-            average_affiliations = ((affiliations + n_steps * average_affiliations) /
+            average_affiliations = ((current_affiliations + n_steps * average_affiliations) /
                                     (n_steps + 1))
             if max_log_likelihood is None or log_like > max_log_likelihood:
                 max_log_likelihood = log_like
 
         if observer is not None:
-            observer(parameters=parameters, affiliations=affiliations,
+            observer(parameters=current_parameters,
+                     affiliations=current_affiliations,
                      log_likelihood=log_like,
                      affiliations_acceptance_rate=acceptance_rate,
                      model_acceptance_rates=(n_components * [acceptance_rates]))
 
         if verbose and (n_steps + 1) % print_frequency == 0:
             print('{:12d} | {: 12.6e} | {: 12.6e} | {:12.6e}'.format(
-                n_steps + 1, log_like, affiliations_acceptance_rate,
+                n_steps + 1, log_like, acceptance_rate,
                 average_time))
 
     return (average_parameters, average_affiliations, max_log_likelihood,

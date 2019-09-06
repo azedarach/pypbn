@@ -14,10 +14,10 @@ namespace pypbn {
 class FEMBVBinLinear {
 public:
    FEMBVBinLinear(
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
-      const Eigen::Ref<const Eigen::MatrixXd>&,
+      const Eigen::Ref<const Eigen::VectorXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
+      const Eigen::Ref<const Eigen::MatrixXd>,
       double, double, double,
       Ipopt_initial_guess,
       int, int,
