@@ -46,7 +46,7 @@ double FEMH1BinLinear_parameters_uniform_prior::log_value(
       return -std::numeric_limits<double>::max();
    }
 
-   return inverse_simplex_volume(n_parameters);
+   return std::log(inverse_simplex_volume(n_parameters));
 }
 
 double FEMH1BinLinear_parameters_exponential_prior::operator()(
@@ -95,7 +95,7 @@ double FEMH1BinLinear_softmax_affiliations_normal_prior::log_value(
    const Eigen::VectorXd gamma(softmax(softmax_affiliations.col(0)));
    double value = log_dirichlet_density(gamma, alpha, tolerance);
 
-   for (int t = 0; t < n_samples; ++t) {
+   for (int t = 1; t < n_samples; ++t) {
       value += log_normal_density(softmax_affiliations.col(t),
                                   softmax_affiliations.col(t - 1),
                                   inverse_covariance);

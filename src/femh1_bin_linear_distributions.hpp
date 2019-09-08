@@ -163,6 +163,7 @@ void add_femh1_bin_linear_log_likelihood_gradient(
                predictors.col(t));
 
             gradient(gradient_index) += prefactor * (pj - gamma(j) * p);
+            ++gradient_index;
          }
       }
    }
