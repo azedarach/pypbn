@@ -2,8 +2,8 @@ import argparse
 import datetime
 import numpy as np
 import pypbn
+import shelve
 import time
-import xarray as xr
 
 from pypbn import FEMBVBinLinear
 
@@ -56,35 +56,51 @@ def to_categorical_values(data, zero_positive=False):
     return categorical_data
 
 
-def generate_fit_inputs(times, categorical_values, memory=0,
+def generate_fit_inputs(times, categorical_values, lags=None,
                         double_indicators=False):
-    lagged_times = times[memory:]
+    if lags is None or not lags:
+        max_lag = 0
+        n_lags = 0
+    else:
+        max_lag = np.max(lags)
+        n_lags = np.size(lags)
+
+    lagged_times = times[max_lag:]
 
     fields = [f for f in categorical_values]
-    lagged_outcomes = {f: categorical_values[f][memory:]
+    lagged_outcomes = {f: categorical_values[f][max_lag:]
                        for f in categorical_values}
 
     n_samples = lagged_times.shape[0]
     n_features = len(lagged_outcomes)
 
-    if memory == 0:
+    if lags is None or not lags:
         # intercept term only
         predictors = np.ones((1, n_samples), dtype='i8')
         predictor_names = ['unresolved']
     else:
         if double_indicators:
-            n_indicators = 2 * n_features * memory
+            n_indicators = 2 * n_features * n_lags
         else:
-            n_indicators = n_features * memory
+            n_indicators = n_features * n_lags
 
-        predictor_names = ['unresolved']
-        predictors = np.zeros((1 + n_indicators, n_samples), dtype='i8')
-        predictors[0, :] = 1
+        if 0 in lags:
+            n_predictors = n_indicators + 1
+            predictor_names = ['unresolved']
+            predictors = np.zeros((n_predictors, n_samples), dtype='i8')
+            predictors[0, :] = 1
+            index = 1
+        else:
+            n_predictors = n_indicators
+            predictor_names = []
+            predictors = np.zeros((n_predictors, n_samples), dtype='i8')
+            index = 0
 
-        index = 1
-        for lag in range(1, memory + 1):
+        for lag in lags:
+            if lag == 0:
+                continue
             for i, f in enumerate(fields):
-                lagged_field = categorical_values[f][memory - lag:-lag]
+                lagged_field = categorical_values[f][max_lag - lag:-lag]
                 if double_indicators:
                     predictors[index, :][lagged_field == 1] = 1
                     index += 1
@@ -158,6 +174,37 @@ def run_fembv_linear_fit(Y, X, n_components=None, n_init=1,
                 n_iter=best_n_iter, runtime=best_runtime)
 
 
+def create_model_dict(outcome, max_tv_norm, regularization,
+                      times, predictor_names, fit_result, attrs=None):
+    n_components = fit_result['affiliations'].shape[0]
+    model = {'outcome': outcome,
+             'max_tv_norm': max_tv_norm,
+             'regularization': regularization,
+             'n_components': n_components,
+             'affiliations': fit_result['affiliations'].copy(),
+             'time': times,
+             'cost': fit_result['cost'],
+             'log_likelihood_bound': fit_result['log_likelihood_bound'],
+             'n_iter': fit_result['n_iter'],
+             'runtime': fit_result['runtime']
+             }
+
+    components = []
+    for i in range(n_components):
+        component_parameters = fit_result['parameters'][i]
+        component = {p: component_parameters[pi]
+                     for pi, p in enumerate(predictor_names)}
+        components.append(component)
+
+    model['components'] = components
+
+    if attrs is not None:
+        for attr in attrs:
+            model[attr] = attrs[attr]
+
+    return model
+
+
 def write_predictors(output_file, times, predictors, is_daily_data=False,
                      year_field=DEFAULT_YEAR_FIELD,
                      month_field=DEFAULT_MONTH_FIELD,
@@ -197,72 +244,6 @@ def write_predictors(output_file, times, predictors, is_daily_data=False,
     np.savetxt(output_file, output_data, header=header, fmt=fmt)
 
 
-def write_output_file(output_file, outcome_names, predictor_names,
-                      max_tv_norms, regularizations,
-                      n_components, times, affiliations, parameters, n_iter,
-                      runtime, cost, log_likelihood_bound, attrs):
-    component_indices = np.arange(n_components)
-
-    affiliations_da = xr.DataArray(
-        affiliations,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations,
-                'component': component_indices,
-                'time': times},
-        dims=['outcome', 'max_tv_norm', 'regularization',
-              'component', 'time'])
-    parameters_da = xr.DataArray(
-        parameters,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations,
-                'component': component_indices,
-                'predictor': predictor_names},
-        dims=['outcome', 'max_tv_norm', 'regularization',
-              'component', 'predictor'])
-    n_iter_da = xr.DataArray(
-        n_iter,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations},
-        dims=['outcome', 'max_tv_norm', 'regularization'])
-    runtime_da = xr.DataArray(
-        runtime,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations},
-        dims=['outcome', 'max_tv_norm', 'regularization'])
-    cost_da = xr.DataArray(
-        cost,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations},
-        dims=['outcome', 'max_tv_norm', 'regularization'])
-    log_like_da = xr.DataArray(
-        log_likelihood_bound,
-        coords={'outcome': outcome_names,
-                'max_tv_norm': max_tv_norms,
-                'regularization': regularizations},
-        dims=['outcome', 'max_tv_norm', 'regularization'])
-
-    ds = xr.Dataset(data_vars={'affiliations': affiliations_da,
-                               'parameters': parameters_da,
-                               'n_iter': n_iter_da,
-                               'runtime': runtime_da,
-                               'cost': cost_da,
-                               'log_likelihood_bound': log_like_da},
-                    coords={'outcome': outcome_names,
-                            'max_tv_norm': max_tv_norms,
-                            'regularization': regularizations,
-                            'component': component_indices,
-                            'time': times,
-                            'predictor': predictor_names},
-                    attrs=attrs)
-
-    ds.to_netcdf(output_file)
-
-
 def parse_cmd_line_args():
     parser = argparse.ArgumentParser(
         description='Run FEM-BV-binary fit on categorical data')
@@ -278,8 +259,8 @@ def parse_cmd_line_args():
     parser.add_argument('--max-tv-norm', dest='max_tv_norm',
                         type=float, action='append',
                         help='maximum TV norm')
-    parser.add_argument('--memory', dest='memory', type=int,
-                        default=0, help='maximum lag')
+    parser.add_argument('--lag', dest='lag', type=int, action='append',
+                        help='lag to be included in model')
     parser.add_argument('--n-init', dest='n_init', type=int,
                         default=1, help='number of initializations')
     parser.add_argument('--tolerance', dest='tolerance',
@@ -333,8 +314,21 @@ def main():
 
     categorical_values = to_categorical_values(values)
 
+    if not args.lag:
+        lags = [0]
+    else:
+        lags = []
+        for lag in args.lag:
+            if lag < 0:
+                raise ValueError('received invalid lag value %r' % lag)
+            if lag in lags:
+                continue
+            else:
+                lags.append(lag)
+        lags = sorted(lags)
+
     times, outcomes, predictors, predictor_names = generate_fit_inputs(
-        times, categorical_values, memory=args.memory,
+        times, categorical_values, lags=lags,
         double_indicators=args.double_indicators)
 
     if args.predictors_file:
@@ -354,25 +348,26 @@ def main():
 
     outcome_names = [f for f in outcomes]
 
-    n_outcomes = len(outcome_names)
-    n_regularizations = np.size(regularizations)
-    n_max_tv_norms = np.size(max_tv_norms)
-    n_features, n_samples = predictors.shape
-    component_indices = np.arange(args.n_components)
+    attrs = dict(n_components=args.n_components,
+                 n_init=args.n_init,
+                 init=args.init,
+                 tolerance=args.tolerance,
+                 parameters_tolerance=args.parameters_tolerance,
+                 max_iterations=args.max_iterations,
+                 max_parameters_iterations=args.max_parameters_iterations,
+                 max_affiliations_iterations=args.max_affiliations_iterations,
+                 random_seed=args.random_seed,
+                 input_file=args.input_csv_file)
 
-    affiliations = np.empty((n_outcomes,  n_max_tv_norms, n_regularizations,
-                             args.n_components, n_samples), dtype='f8')
-    parameters = np.empty((n_outcomes, n_max_tv_norms, n_regularizations,
-                           args.n_components, n_features), dtype='f8')
-    n_iter = np.empty((n_outcomes, n_max_tv_norms, n_regularizations),
-                      dtype='i8')
-    runtime = np.empty((n_outcomes, n_max_tv_norms, n_regularizations),
-                       dtype='f8')
-    cost = np.empty((n_outcomes, n_max_tv_norms, n_regularizations),
-                    dtype='f8')
-    log_like = np.empty((n_outcomes, n_max_tv_norms, n_regularizations),
-                        dtype='f8')
+    if args.predictors_file:
+        attrs['predictors_file'] = args.predictors_file
 
+    if args.random_state is None:
+        attrs['random_state'] = 'None'
+    else:
+        attrs['random_state'] = args.random_state
+
+    models = {o: [] for o in outcome_names}
     for i, f in enumerate(outcomes):
         for j, c in enumerate(max_tv_norms):
             for k, epsilon in enumerate(regularizations):
@@ -388,42 +383,19 @@ def main():
                     verbose=args.verbose, random_seed=args.random_seed,
                     random_state=args.random_state)
 
-                affiliations[i, j, k, ...] = fit_result['affiliations']
-                parameters[i, j, k, ...] = fit_result['parameters']
-                n_iter[i, j, k] = fit_result['n_iter']
-                runtime[i, j, k] = fit_result['runtime']
-                cost[i, j, k] = fit_result['cost']
-                log_like[i, j, k] = fit_result['log_likelihood_bound']
+                fitted_model = create_model_dict(f, c, epsilon,
+                                                 times, predictor_names,
+                                                 fit_result, attrs)
+
+                models[f].append(fitted_model)
 
     if args.output_file:
-        attrs = dict(n_components=args.n_components,
-                     n_init=args.n_init,
-                     init=args.init,
-                     tolerance=args.tolerance,
-                     parameters_tolerance=args.parameters_tolerance,
-                     max_iterations=args.max_iterations,
-                     max_parameters_iterations=args.max_parameters_iterations,
-                     max_affiliations_iterations=args.max_affiliations_iterations,
-                     random_seed=args.random_seed,
-                     input_file=args.input_csv_file)
-
-        if args.predictors_file:
-            attrs['predictors_file'] = args.predictors_file
-
-        if args.random_state is None:
-            attrs['random_state'] = 'None'
-        else:
-            attrs['random_state'] = args.random_state
-
-        write_output_file(args.output_file, outcome_names=outcome_names,
-                          predictor_names=predictor_names,
-                          regularizations=regularizations,
-                          max_tv_norms=max_tv_norms,
-                          n_components=args.n_components,
-                          affiliations=affiliations,
-                          parameters=parameters, n_iter=n_iter,
-                          runtime=runtime, cost=cost,
-                          log_likelihood_bound=log_like, attrs=attrs)
+        with shelve.open(args.output_file) as db:
+            for f in outcomes:
+                if f in db:
+                    db[f] += models[f]
+                else:
+                    db[f] = models[f]
 
 
 if __name__ == '__main__':
