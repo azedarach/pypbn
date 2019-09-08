@@ -8,7 +8,7 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
 
-include(CMIPFEMBVBINBuildOptions)
+include(PyPBNBuildOptions)
 
 if(ENABLE_COMPILER_WARNINGS)
     include(add_cxx_flag_if_supported)
