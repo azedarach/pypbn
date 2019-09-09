@@ -118,7 +118,7 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                               max_parameters_iterations=1000,
                               max_affiliations_iterations=1000,
                               verbose=0, random_seed=0,
-                              require_monotonic_cost_decrease=True):
+                              require_monotonic_cost_decrease=False):
     if verbose:
         print('*** FEM-BV-BIN linear: n_components = {:d}'.format(
             affiliations.shape[0]))
@@ -157,11 +157,16 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
 
             cost_increased = ((new_cost > old_cost) and
                               (np.abs(new_cost - old_cost) > tolerance))
-            if cost_increased and require_monotonic_cost_decrease:
-                raise RuntimeError(
-                    'fit cost increased after parameters update: '
-                    '(old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e}'.format(
-                        old_cost, new_cost, new_cost - old_cost))
+            if cost_increased:
+                msg = 'fit cost increased after parameters update: '
+                msg = (msg + '(max_tv_norm={:.3e}, epsilon={:.3e},'.format(
+                    max_tv_norm, epsilon) +
+                       ' old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e})'.format(
+                           old_cold, new_cost, new_cost - old_cost))
+                if require_monotonic_cost:
+                    raise RuntimeError(msg)
+                else:
+                    warnings.warn(msg, UserWarning)
 
         if update_affiliations:
             affiliations_success = solver.update_affiliations()
@@ -169,11 +174,16 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
 
             cost_increased = ((new_cost > old_cost) and
                               (np.abs(new_cost - old_cost) > tolerance))
-            if cost_increased and require_monotonic_cost_decrease:
-                raise RuntimeError(
-                    'fit cost increased after affiliations update: '
-                    '(old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e}'.format(
-                        old_cost, new_cost, new_cost - old_cost))
+            if cost_increased:
+                msg = 'fit cost increased after affiliations update: '
+                msg = (msg + '(max_tv_norm={:.3e}, epsilon={:.3e},'.format(
+                    max_tv_norm, epsilon) +
+                       ' old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e})'.format(
+                           old_cold, new_cost, new_cost - old_cost))
+                if require_monotonic_cost_decrease:
+                    raise RuntimeError(msg)
+                else:
+                    warnings.warn(msg, UserWarning)
 
         cost_delta = new_cost - old_cost
 
