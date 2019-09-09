@@ -356,13 +356,23 @@ def main():
                 raise ValueError('invalid outcome %s' % o)
         outcome_names = args.outcome
 
+    if args.parameters_initialization == pypbn.Uniform:
+        parameters_init_string = 'Uniform'
+    elif args.parameters_initialization == pypbn.Random:
+        parameters_init_string = 'Random'
+    elif args.parameters_initialization == pypbn.Current:
+        parameters_init_string = 'Current'
+    else:
+        raise ValueError('invalid parameters initialization %r' %
+                         args.parameters_initialization)
+
     attrs = dict(n_components=args.n_components,
                  n_init=args.n_init,
                  init=args.init,
                  tolerance=args.tolerance,
                  parameters_tolerance=args.parameters_tolerance,
                  max_iterations=args.max_iterations,
-                 parameters_initialization=args.parameters_initialization,
+                 parameters_initialization=parameters_init_string,
                  max_parameters_iterations=args.max_parameters_iterations,
                  max_affiliations_iterations=args.max_affiliations_iterations,
                  random_seed=args.random_seed,
@@ -400,7 +410,7 @@ def main():
 
     if args.output_file:
         with shelve.open(args.output_file) as db:
-            for f in outcomes:
+            for f in outcome_names:
                 if f in db:
                     db[f] += models[f]
                 else:
