@@ -192,7 +192,7 @@ def create_model_dict(outcome, max_tv_norm, regularization,
     components = []
     for i in range(n_components):
         component_parameters = fit_result['parameters'][i]
-        component = {p: component_parameters[pi]
+        component = {p: (component_parameters[pi], None, None)
                      for pi, p in enumerate(predictor_names)}
         components.append(component)
 
@@ -288,6 +288,8 @@ def parse_cmd_line_args():
                         dest='max_affiliations_iterations',
                         type=int, default=10000,
                         help='maximum number of affiliations optimizer iterations')
+    parser.add_argument('--outcome', dest='outcome', action='append',
+                        help='name of outcome to fit')
     parser.add_argument('--verbose', dest='verbose', action='store_true',
                         help='produce verbose output')
     parser.add_argument('--random-seed', dest='random_seed', type=int,
@@ -346,7 +348,13 @@ def main():
     else:
         max_tv_norms = args.max_tv_norm
 
-    outcome_names = [f for f in outcomes]
+    if args.outcome is None or not args.outcome:
+        outcome_names = [f for f in outcomes]
+    else:
+        for o in args.outcome:
+            if o not in outcomes:
+                raise ValueError('invalid outcome %s' % o)
+        outcome_names = args.outcome
 
     attrs = dict(n_components=args.n_components,
                  n_init=args.n_init,
@@ -354,6 +362,7 @@ def main():
                  tolerance=args.tolerance,
                  parameters_tolerance=args.parameters_tolerance,
                  max_iterations=args.max_iterations,
+                 parameters_initialization=args.parameters_initialization,
                  max_parameters_iterations=args.max_parameters_iterations,
                  max_affiliations_iterations=args.max_affiliations_iterations,
                  random_seed=args.random_seed,
@@ -368,7 +377,7 @@ def main():
         attrs['random_state'] = args.random_state
 
     models = {o: [] for o in outcome_names}
-    for i, f in enumerate(outcomes):
+    for i, f in enumerate(outcome_names):
         for j, c in enumerate(max_tv_norms):
             for k, epsilon in enumerate(regularizations):
                 fit_result = run_fembv_linear_fit(
