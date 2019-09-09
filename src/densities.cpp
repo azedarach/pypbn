@@ -46,7 +46,7 @@ double log_dirichlet_density(const Eigen::VectorXd& x,
 double log_normal_density(const Eigen::VectorXd& x, const Eigen::VectorXd& mu,
                           const Eigen::MatrixXd& sigma_inverse)
 {
-   constexpr double pi = 4.0 * std::atan(1);
+   static const double pi = 4.0 * std::atan(1);
 
    const int n_dims = x.size();
    const double det_sigma_inverse = sigma_inverse.determinant();
