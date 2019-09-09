@@ -2,8 +2,8 @@ import argparse
 import datetime
 import numpy as np
 import pypbn
+import shelve
 import time
-import xarray as xr
 
 from pypbn import FEMH1BinLinearMC
 
@@ -56,35 +56,51 @@ def to_categorical_values(data, zero_positive=False):
     return categorical_data
 
 
-def generate_fit_inputs(times, categorical_values, memory=0,
+def generate_fit_inputs(times, categorical_values, lags=None,
                         double_indicators=False):
-    lagged_times = times[memory:]
+    if lags is None or not lags:
+        max_lag = 0
+        n_lags = 0
+    else:
+        max_lag = np.max(lags)
+        n_lags = np.size(lags)
+
+    lagged_times = times[max_lag:]
 
     fields = [f for f in categorical_values]
-    lagged_outcomes = {f: categorical_values[f][memory:]
+    lagged_outcomes = {f: categorical_values[f][max_lag:]
                        for f in categorical_values}
 
     n_samples = lagged_times.shape[0]
     n_features = len(lagged_outcomes)
 
-    if memory == 0:
+    if lags is None or not lags:
         # intercept term only
         predictors = np.ones((1, n_samples), dtype='i8')
         predictor_names = ['unresolved']
     else:
         if double_indicators:
-            n_indicators = 2 * n_features * memory
+            n_indicators = 2 * n_features * n_lags
         else:
-            n_indicators = n_features * memory
+            n_indicators = n_features * n_lags
 
-        predictor_names = ['unresolved']
-        predictors = np.zeros((1 + n_indicators, n_samples), dtype='i8')
-        predictors[0, :] = 1
+        if 0 in lags:
+            n_predictors = n_indicators + 1
+            predictor_names = ['unresolved']
+            predictors = np.zeros((n_predictors, n_samples), dtype='i8')
+            predictors[0, :] = 1
+            index = 1
+        else:
+            n_predictors = n_indicators
+            predictor_names = []
+            predictors = np.zeros((n_predictors, n_samples), dtype='i8')
+            index = 0
 
-        index = 1
-        for lag in range(1, memory + 1):
+        for lag in lags:
+            if lag == 0:
+                continue
             for i, f in enumerate(fields):
-                lagged_field = categorical_values[f][memory - lag:-lag]
+                lagged_field = categorical_values[f][max_lag - lag:-lag]
                 if double_indicators:
                     predictors[index, :][lagged_field == 1] = 1
                     index += 1
@@ -110,10 +126,19 @@ def run_femh1_linear_mcmc(Y, X, n_components=None, n_chains=1,
                           chain_length=10000, burn_in_fraction=0.5,
                           max_parameters_iterations=1000,
                           verbose=0, random_seed=0, random_state=None):
-    best_affiliations = None
-    best_parameters = None
-    best_log_likelihood = None
-    best_runtime = None
+    if X.ndim == 1:
+        n_features = 1
+        n_samples = np.size(X)
+    else:
+        n_features, n_samples = X.shape
+
+    affiliations_chains = np.empty(
+        (n_chains, chain_length, n_components, n_samples))
+    parameters_chains = np.empty(
+        (n_chains, chain_length, n_components, n_features))
+    log_likelihood_chains = np.empty(
+        (n_chains, chain_length))
+    runtimes = np.empty((n_chains,))
 
     success = False
     for i in range(n_chains):
@@ -130,32 +155,61 @@ def run_femh1_linear_mcmc(Y, X, n_components=None, n_chains=1,
                                        parameters_tolerance=parameters_tolerance,
                                        parameters_initialization=parameters_initialization,
                                        chain_length=chain_length,
-                                       burn_in_fraction=burn_in_fraction,
                                        max_parameters_iterations=max_parameters_iterations,
                                        verbose=verbose, random_seed=random_seed,
-                                       random_state=random_state,
-                                       include_parameters=True)
+                                       random_state=random_state)
 
-        affiliations = model.fit_transform(Y, X)
-        parameters = model.parameters_
-        log_likelihood = model.log_likelihood_
+        affiliations_chain = model.fit_transform(Y, X)
+        parameters_chain = model.parameters_chain_
+        log_likelihood_chain = model.log_likelihood_chain_
 
         end_time = time.perf_counter()
 
         runtime = end_time - start_time
 
-        if best_log_likelihood is None or log_likelihood > best_log_likelihood:
-            best_affiliations = affiliations.copy()
-            best_parameters = parameters.copy()
-            best_log_likelihood = log_likelihood
-            best_runtime = runtime
-            success = True
+        affiliations_chains[i] = affiliations_chain
+        parameters_chains[i] = parameters_chain
+        log_likelihood_chains[i] = log_likelihood_chain
+        runtimes[i] = runtime
+
+        success = True
 
     if not success:
         raise RuntimeError('failed to fit FEM-H1 model')
 
-    return dict(affiliations=best_affiliations, parameters=best_parameters,
-                log_likelihood=best_log_likelihood, runtime=best_runtime)
+    return dict(affiliations=affiliations_chains,
+                parameters=parameters_chains,
+                log_likelihood=log_likelihood_chains,
+                runtime=runtimes)
+
+
+def create_model_dict(outcome, epsilon_gamma, epsilon_theta,
+                      times, predictor_names, fit_result, attrs=None):
+    n_components = fit_result['affiliations'].shape[-2]
+    model = {'outcome': outcome,
+             'epsilon_gamma': epsilon_gamma,
+             'epsilon_theta': epsilon_theta,
+             'n_components': n_components,
+             'affiliations': fit_result['affiliations'].copy(),
+             'time': times,
+             'log_likelihood': fit_result['log_likelihood'],
+             'runtime': fit_result['runtime']
+             }
+
+    components = []
+    for i in range(n_components):
+        component_parameters = fit_result['parameters'][:, :, i, :]
+        component = {p: component_parameters[:, :, pi]
+                     for pi, p in enumerate(predictor_names)}
+        components.append(component)
+
+    model['components'] = components
+
+    if attrs is not None:
+        for attr in attrs:
+            model[attr] = attrs[attr]
+
+    return model
 
 
 def write_predictors(output_file, times, predictors, is_daily_data=False,
@@ -197,58 +251,6 @@ def write_predictors(output_file, times, predictors, is_daily_data=False,
     np.savetxt(output_file, output_data, header=header, fmt=fmt)
 
 
-def write_output_file(output_file, outcome_names, predictor_names,
-                      epsilon_gammas, epsilon_thetas,
-                      n_components, times, affiliations, parameters,
-                      runtime, log_likelihood, attrs):
-    component_indices = np.arange(n_components)
-
-    affiliations_da = xr.DataArray(
-        affiliations,
-        coords={'outcome': outcome_names,
-                'epsilon_gamma': epsilon_gammas,
-                'epsilon_theta': epsilon_thetas,
-                'component': component_indices,
-                'time': times},
-        dims=['outcome', 'epsilon_gamma', 'epsilon_theta',
-              'component', 'time'])
-    parameters_da = xr.DataArray(
-        parameters,
-        coords={'outcome': outcome_names,
-                'epsilon_gamma': epsilon_gammas,
-                'epsilon_thetas': epsilon_thetas,
-                'component': component_indices,
-                'predictor': predictor_names},
-        dims=['outcome', 'epsilon_gamma', 'epsilon_thetas',
-              'component', 'predictor'])
-    runtime_da = xr.DataArray(
-        runtime,
-        coords={'outcome': outcome_names,
-                'epsilon_gamma': epsilon_gammas,
-                'epsilon_theta': epsilon_thetas},
-        dims=['outcome', 'epsilon_gamma', 'epsilon_theta'])
-    log_like_da = xr.DataArray(
-        log_likelihood,
-        coords={'outcome': outcome_names,
-                'epsilon_gamma': epsilon_gammas,
-                'epsilon_theta': epsilon_thetas},
-        dims=['outcome', 'epsilon_gamma', 'epsilon_theta'])
-
-    ds = xr.Dataset(data_vars={'affiliations': affiliations_da,
-                               'parameters': parameters_da,
-                               'runtime': runtime_da,
-                               'log_likelihood': log_like_da},
-                    coords={'outcome': outcome_names,
-                            'epsilon_gamma': epsilon_gammas,
-                            'epsilon_theta': epsilon_theta,
-                            'component': component_indices,
-                            'time': times,
-                            'predictor': predictor_names},
-                    attrs=attrs)
-
-    ds.to_netcdf(output_file)
-
-
 def parse_cmd_line_args():
     parser = argparse.ArgumentParser(
         description='Run FEM-H1-binary fit on categorical data')
@@ -276,8 +278,8 @@ def parse_cmd_line_args():
     parser.add_argument('--leapfrog-step-size', dest='leapfrog_step_size',
                         type=float, default=0.001,
                         help='leapfrog step size')
-    parser.add_argument('--memory', dest='memory', type=int,
-                        default=0, help='maximum lag')
+    parser.add_argument('--lag', dest='lag', type=int, action='append',
+                        help='lag to be included in model')
     parser.add_argument('--n-init', dest='n_init', type=int,
                         default=1, help='number of chains')
     parser.add_argument('--init', dest='init',
@@ -297,12 +299,12 @@ def parse_cmd_line_args():
     parser.add_argument('--chain-length', dest='chain_length',
                         type=int, default=10000,
                         help='chain length')
-    parser.add_argument('--burn-in', dest='burn_in_fraction', type=float,
-                        default=0.5, help='burn in fraction')
     parser.add_argument('--max-parameters-iterations',
                         dest='max_parameters_iterations',
                         type=int, default=10000,
                         help='maximum number of parameter optimizer iterations')
+    parser.add_argument('--outcome', dest='outcome', action='append',
+                        help='name of outcome to fit')
     parser.add_argument('--verbose', dest='verbose', action='store_true',
                         help='produce verbose output')
     parser.add_argument('--random-seed', dest='random_seed', type=int,
@@ -329,8 +331,21 @@ def main():
 
     categorical_values = to_categorical_values(values)
 
+    if not args.lag:
+        lags = [0]
+    else:
+        lags = []
+        for lag in args.lag:
+            if lag < 0:
+                raise ValueError('received invalid lag value %r' % lag)
+            if lag in lags:
+                continue
+            else:
+                lags.append(lag)
+        lags = sorted(lags)
+
     times, outcomes, predictors, predictor_names = generate_fit_inputs(
-        times, categorical_values, memory=args.memory,
+        times, categorical_values, lags=lags,
         double_indicators=args.double_indicators)
 
     if args.predictors_file:
@@ -348,29 +363,52 @@ def main():
     else:
         epsilon_gammas = args.epsilon_gamma
 
-    outcome_names = [f for f in outcomes]
+    if args.outcome is None or not args.outcome:
+        outcome_names = [f for f in outcomes]
+    else:
+        for o in args.outcome:
+            if o not in outcomes:
+                raise ValueError('invalid outcome %s' % o)
+        outcome_names = args.outcome
 
-    n_outcomes = len(outcome_names)
-    n_epsilon_thetas = np.size(epsilon_thetas)
-    n_epsilon_gammas = np.size(epsilon_gammas)
-    n_features, n_samples = predictors.shape
-    component_indices = np.arange(args.n_components)
+    if args.parameters_initialization == pypbn.Uniform:
+        parameters_init_string = 'Uniform'
+    elif args.parameters_initialization == pypbn.Random:
+        parameters_init_string = 'Random'
+    elif args.parameters_initialization == pypbn.Current:
+        parameters_init_string = 'Current'
+    else:
+        raise ValueError('invalid parameters initialization %r' %
+                         args.parameters_initialization)
 
-    affiliations = np.empty((n_outcomes, n_epsilon_gammas,
-                             n_epsilon_thetas,
-                             args.n_components, n_samples), dtype='f8')
-    parameters = np.empty((n_outcomes, n_epsilon_gammas,
-                           n_epsilon_thetas,
-                           args.n_components, n_features), dtype='f8')
-    runtime = np.empty((n_outcomes, n_epsilon_gammas, n_epsilon_thetas),
-                       dtype='f8')
-    log_like = np.empty((n_outcomes, n_epsilon_gammas, n_epsilon_thetas),
-                        dtype='f8')
+    attrs = dict(n_components=args.n_components,
+                 n_init=args.n_init,
+                 sigma_theta=args.sigma_theta,
+                 sigma_gamma=args.sigma_gamma,
+                 n_leapfrog_steps=args.n_leapfrog_steps,
+                 leapfrog_step_size=args.leapfrog_step_size,
+                 init=args.init,
+                 method=args.method,
+                 parameters_tolerance=args.parameters_tolerance,
+                 parameters_initialization=parameters_init_string,
+                 chain_length=args.chain_length,
+                 max_parameters_iterations=args.max_parameters_iterations,
+                 random_seed=args.random_seed,
+                 input_file=args.input_csv_file)
 
-    for i, f in enumerate(outcomes):
+    if args.predictors_file:
+        attrs['predictors_file'] = args.predictors_file
+
+    if args.random_state is None:
+        attrs['random_state'] = 'None'
+    else:
+        attrs['random_state'] = args.random_state
+
+    models = {o: [] for o in outcome_names}
+    for i, f in enumerate(outcome_names):
         for j, eps_gamma in enumerate(epsilon_gammas):
             for k, eps_theta in enumerate(epsilon_thetas):
-                fit_result = run_femh1_linear_mcmc(
+                run_result = run_femh1_linear_mcmc(
                     outcomes[f], predictors, n_components=args.n_components,
                     n_chains=args.n_init, epsilon_theta=eps_theta,
                     epsilon_gamma=eps_gamma,
@@ -382,49 +420,22 @@ def main():
                     parameters_tolerance=args.parameters_tolerance,
                     parameters_initialization=args.parameters_initialization,
                     chain_length=args.chain_length,
-                    burn_in_fraction=args.burn_in_fraction,
                     max_parameters_iterations=args.max_parameters_iterations,
                     verbose=args.verbose, random_seed=args.random_seed,
                     random_state=args.random_state)
 
-                affiliations[i, j, k, ...] = fit_result['affiliations']
-                parameters[i, j, k, ...] = fit_result['parameters']
-                runtime[i, j, k] = fit_result['runtime']
-                log_like[i, j, k] = fit_result['log_likelihood']
+                chains = create_model_dict(f, eps_gamma, eps_theta, times,
+                                           predictor_names, run_result, attrs)
+
+                models[f].append(chains)
 
     if args.output_file:
-        attrs = dict(n_components=args.n_components,
-                     n_init=args.n_init,
-                     sigma_theta=args.sigma_theta,
-                     sigma_gamma=args.sigma_gamma,
-                     n_leapfrog_steps=args.n_leapfrog_steps,
-                     leapfrog_step_size=args.leapfrog_step_size,
-                     init=args.init,
-                     method=args.method,
-                     parameters_tolerance=args.parameters_tolerance,
-                     chain_length=args.chain_length,
-                     burn_in_fraction=args.burn_in_fraction,
-                     max_parameters_iterations=args.max_parameters_iterations,
-                     random_seed=args.random_seed,
-                     input_file=args.input_csv_file)
-
-        if args.predictors_file:
-            attrs['predictors_file'] = args.predictors_file
-
-        if args.random_state is None:
-            attrs['random_state'] = 'None'
-        else:
-            attrs['random_state'] = args.random_state
-
-        write_output_file(args.output_file, outcome_names=outcome_names,
-                          predictor_names=predictor_names,
-                          epsilon_thetas=epsilon_thetas,
-                          epsilon_gammas=epsilon_gammas,
-                          n_components=args.n_components,
-                          affiliations=affiliations,
-                          parameters=parameters,
-                          runtime=runtime,
-                          log_likelihood_bound=log_like, attrs=attrs)
+        with shelve.open(args.output_file) as db:
+            for f in outcome_names:
+                if f in db:
+                    db[f] += models[f]
+                else:
+                    db[f] = models[f]
 
 
 if __name__ == '__main__':
