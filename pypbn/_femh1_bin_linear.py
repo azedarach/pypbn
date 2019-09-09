@@ -110,13 +110,12 @@ def _initialize_femh1_bin_linear(X, n_components, init='random',
 def _fit_femh1_bin_linear_hmc(Y, X, parameters, affiliations,
                               epsilon_theta=0, epsilon_gamma=1e-6,
                               n_leapfrog_steps=10, leapfrog_step_size=0.001,
-                              chain_length=10000, burn_in_fraction=0.5,
-                              verbose=0, random_seed=0, print_frequency=10,
-                              observer=None):
+                              chain_length=10000,
+                              verbose=0, random_seed=0, print_frequency=10):
     n_components = affiliations.shape[0]
 
     if verbose:
-        print('*** FEM-H1-BIN linear: n_components = {:d}'.format(
+        print('*** FEM-H1-BIN linear HMC: n_components = {:d}'.format(
             n_components))
         print('{:<12s} | {:<13s} | {:<13s} | {:<13s}'.format(
             'Iteration', 'Log-likelihood', 'Acceptance',
@@ -132,9 +131,10 @@ def _fit_femh1_bin_linear_hmc(Y, X, parameters, affiliations,
 
     update_success = True
     average_time = 0
-    average_parameters = np.zeros(parameters.shape)
-    average_affiliations = np.zeros(affiliations.shape)
-    max_log_likelihood = None
+    acceptance_rate = 0
+    parameters_chain = np.zeros((chain_length,) + parameters.shape)
+    affiliations_chain = np.zeros((chain_length,) + affiliations.shape)
+    log_like_chain = np.zeros((chain_length,), dtype='f8')
 
     for n_steps in range(chain_length):
         start_time = time.perf_counter()
@@ -151,32 +151,20 @@ def _fit_femh1_bin_linear_hmc(Y, X, parameters, affiliations,
 
         current_parameters = stepper.get_parameters()
         current_affiliations = stepper.get_affiliations()
-
         log_like = stepper.get_log_likelihood()
         acceptance_rate = stepper.get_acceptance_rate()
 
-        if n_steps / chain_length >= burn_in_fraction:
-            average_parameters = ((current_parameters + n_steps * average_parameters) /
-                                  (n_steps + 1))
-            average_affiliations = ((current_affiliations + n_steps * average_affiliations) /
-                                    (n_steps + 1))
-            if max_log_likelihood is None or log_like > max_log_likelihood:
-                max_log_likelihood = log_like
-
-        if observer is not None:
-            observer(parameters=current_parameters,
-                     affiliations=current_affiliations,
-                     log_likelihood=log_like,
-                     affiliations_acceptance_rate=acceptance_rate,
-                     model_acceptance_rates=(n_components * [acceptance_rates]))
+        parameters_chain[n_steps] = current_parameters
+        affiliations_chain[n_steps] = current_affiliations
+        log_like_chain[n_steps] = log_like
 
         if verbose and (n_steps + 1) % print_frequency == 0:
             print('{:12d} | {: 12.6e} | {: 12.6e} | {:12.6e}'.format(
                 n_steps + 1, log_like, acceptance_rate,
                 average_time))
 
-    return (average_parameters, average_affiliations, max_log_likelihood,
-            update_success)
+    return (parameters_chain, affiliations_chain, log_like_chain,
+            acceptance_rate, update_success)
 
 
 def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
@@ -185,13 +173,12 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
                                      include_parameters=True,
                                      parameters_tolerance=1e-6,
                                      parameters_initialization=pypbn_ext.Uniform,
-                                     chain_length=10000, burn_in_fraction=0.5,
+                                     chain_length=10000,
                                      max_parameters_iterations=1000,
                                      verbose=0, random_seed=0,
-                                     print_frequency=10,
-                                     observer=None):
+                                     print_frequency=10):
     if verbose:
-        print('*** FEM-H1-BIN linear: n_components = {:d}'.format(
+        print('*** FEM-H1-BIN linear Metropolis: n_components = {:d}'.format(
             affiliations.shape[0]))
         print('{:<12s} | {:<13s} | {:<13s} | {:<13s} | {:<13s} | {:<13s}'.format(
             'Iteration', 'Log-likelihood', 'Gamma acceptance',
@@ -211,9 +198,12 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
 
     update_success = True
     average_time = 0
-    average_parameters = np.zeros(parameters.shape)
-    average_affiliations = np.zeros(affiliations.shape)
-    max_log_likelihood = None
+    affiliations_acceptance_rate = 0
+    model_acceptance_rates = None
+    parameters_chain = np.zeros((chain_length,) + parameters.shape)
+    affiliations_chain = np.zeros((chain_length,) + affiliations.shape)
+    log_like_chain = np.zeros((chain_length,), dtype='f8')
+
     for n_steps in range(chain_length):
         start_time = time.perf_counter()
 
@@ -229,24 +219,14 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
 
         parameters = stepper.get_parameters()
         affiliations = stepper.get_affiliations()
-
         log_like = stepper.get_log_likelihood()
+
+        parameters_chain[n_steps] = current_parameters
+        affiliations_chain[n_steps] = current_affiliations
+        log_like_chain[n_steps] = log_like
+
         affiliations_acceptance_rate = stepper.get_affiliations_acceptance_rate()
         model_acceptance_rates = stepper.get_model_acceptance_rates()
-
-        if n_steps / chain_length >= burn_in_fraction:
-            average_parameters = ((parameters + n_steps * average_parameters) /
-                                  (n_steps + 1))
-            average_affiliations = ((affiliations + n_steps * average_affiliations) /
-                                    (n_steps + 1))
-            if max_log_likelihood is None or log_like > max_log_likelihood:
-                max_log_likelihood = log_like
-
-        if observer is not None:
-            observer(parameters=parameters, affiliations=affiliations,
-                     log_likelihood=log_like,
-                     affiliations_acceptance_rate=affiliations_acceptance_rate,
-                     model_acceptance_rates=model_acceptance_rates)
 
         if verbose and (n_steps + 1) % print_frequency == 0:
             print('{:12d} | {: 12.6e} | {: 12.6e} | {:12.6e} | {: 12.6e} | {: 12.6e}'.format(
@@ -254,7 +234,8 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
                 np.min(model_acceptance_rates),
                 np.max(model_acceptance_rates), average_time))
 
-    return (average_parameters, average_affiliations, max_log_likelihood,
+    return (parameters_chain, affiliations_chain, log_like_chain,
+            affiliations_acceptance_rate, model_acceptance_rates,
             update_success)
 
 
@@ -269,10 +250,10 @@ def femh1_bin_linear_fit_mc(outcome, predictors, parameters=None,
                             init=None,
                             parameters_tolerance=1e-6,
                             parameters_initialization=pypbn_ext.Uniform,
-                            chain_length=10000, burn_in_fraction=0.5,
+                            chain_length=10000,
                             max_parameters_iterations=1000,
                             verbose=0, random_seed=0, random_state=None,
-                            print_frequency=10, observer=None):
+                            print_frequency=10):
     Y = outcome
 
     if predictors.ndim == 1:
@@ -310,20 +291,19 @@ def femh1_bin_linear_fit_mc(outcome, predictors, parameters=None,
             include_parameters=include_parameters,
             parameters_tolerance=parameters_tolerance,
             parameters_initialization=parameters_initialization,
-            chain_length=chain_length, burn_in_fraction=burn_in_fraction,
+            chain_length=chain_length,
             max_parameters_iterations=max_parameters_iterations,
             verbose=verbose, random_seed=random_seed,
-            print_frequency=print_frequency,
-            observer=observer)
+            print_frequency=print_frequency)
     elif method == 'hmc':
         result = _fit_femh1_bin_linear_hmc(
             Y, X, parameters, affiliations,
             epsilon_theta=epsilon_theta, epsilon_gamma=epsilon_gamma,
             n_leapfrog_steps=n_leapfrog_steps,
             leapfrog_step_size=leapfrog_step_size,
-            chain_length=chain_length, burn_in_fraction=burn_in_fraction,
+            chain_length=chain_length,
             verbose=verbose, random_seed=random_seed,
-            print_frequency=print_frequency, observer=observer)
+            print_frequency=print_frequency)
     else:
         raise ValueError("Invalid method parameter '%r'" % method)
 
@@ -341,7 +321,7 @@ class FEMH1BinLinearMC(object):
                  n_leapfrog_steps=10, leapfrog_step_size=0.001,
                  include_parameters=True, parameters_tolerance=1e-6,
                  parameters_initialization=pypbn_ext.Uniform,
-                 chain_length=1000, burn_in_fraction=0.5,
+                 chain_length=1000,
                  max_parameters_iterations=1000,
                  verbose=0, random_seed=0, random_state=None):
         self.n_components = n_components
@@ -357,7 +337,6 @@ class FEMH1BinLinearMC(object):
         self.parameters_tolerance = parameters_tolerance
         self.parameters_initialization = parameters_initialization
         self.chain_length = chain_length
-        self.burn_in_fraction = burn_in_fraction
         self.max_parameters_iterations = max_parameters_iterations
         self.verbose = verbose
         self.random_seed = random_seed
@@ -365,7 +344,7 @@ class FEMH1BinLinearMC(object):
 
     def fit_transform(self, outcomes, predictors, parameters=None,
                       affiliations=None):
-        parameters_, affiliations_, log_like_ = femh1_bin_linear_fit_mc(
+        parameters_chain_, affiliations_chain_, log_like_chain_ = femh1_bin_linear_fit_mc(
             outcomes, predictors, parameters=parameters,
             affiliations=affiliations,
             n_components=self.n_components,
@@ -381,16 +360,15 @@ class FEMH1BinLinearMC(object):
             parameters_tolerance=self.parameters_tolerance,
             parameters_initialization=self.parameters_initialization,
             chain_length=self.chain_length,
-            burn_in_fraction=self.burn_in_fraction,
             max_parameters_iterations=self.max_parameters_iterations,
             verbose=self.verbose, random_seed=self.random_seed,
-            random_state=self.random_state)
+            random_state=self.random_state)[:3]
 
-        self.n_components_ = parameters_.shape[0]
-        self.parameters_ = parameters_
-        self.log_likelihood_ = log_like_
+        self.n_components_ = parameters_chain_.shape[1]
+        self.parameters_chain_ = parameters_chain_
+        self.log_likelihood_chain_ = log_like_chain_
 
-        return affiliations_
+        return affiliations_chain_
 
     def fit(self, outcomes, predictors, **kwargs):
         self.fit_transform(outcomes, predictors, **kwargs)
