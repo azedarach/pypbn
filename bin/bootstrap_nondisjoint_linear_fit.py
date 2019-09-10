@@ -1,10 +1,15 @@
 import argparse
 import datetime
 import numpy as np
+import pypbn
 import re
 import shelve
+import time
 
+from math import pi
 from sklearn.utils import check_random_state
+
+from pypbn import FEMBVBinLinear
 
 
 def calculate_bic(log_likelihood, n_pars, n_samples):
@@ -28,7 +33,7 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
             for c in components:
                 predictor_names = [p for p in c]
                 for p in predictor_names:
-                    if len(c[p] > 1):
+                    if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
@@ -45,7 +50,7 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
             for c in components:
                 predictor_names = [p for p in c]
                 for p in predictor_names:
-                    if len(c[p] > 1):
+                    if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
@@ -64,6 +69,10 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
 def get_best_model(models, criterion='bic', threshold=5e-8, cluster_bic=True):
     best_model = None
 
+    if isinstance(models, dict):
+        best_model = models
+        return best_model
+
     for model in models:
         if best_model is None:
             best_model = model
@@ -73,7 +82,7 @@ def get_best_model(models, criterion='bic', threshold=5e-8, cluster_bic=True):
             if model['cost'] < best_model['cost']:
                 best_model = model
         elif criterion == 'bic':
-            best_model_bic = get_model_bic(model, threshold=threshold,
+            best_model_bic = get_model_bic(best_model, threshold=threshold,
                                            cluster_bic=cluster_bic)
             model_bic = get_model_bic(model, threshold=threshold,
                                       cluster_bic=cluster_bic)
@@ -124,11 +133,37 @@ def get_required_index_names(models):
 
 def get_simulation_times(models):
     n_models = len(models)
-    times = models[0]['time']
-    for i in range(1, n_models):
-        if not np.all(models[i]['time'] == times):
-            raise RuntimeError('times do not match in all models')
-    return times
+
+    start_time = None
+    end_time = None
+
+    for i in range(n_models):
+        model_start_time = np.min(models[i]['time'])
+        model_end_time = np.max(models[i]['time'])
+
+        if start_time is None or model_start_time > start_time:
+            start_time = model_start_time
+
+        if end_time is None or model_end_time < end_time:
+            end_time = model_end_time
+
+    times = None
+    masked_models = models.copy()
+
+    for i in range(n_models):
+        model_times = models[i]['time']
+        mask = np.logical_and(model_times >= start_time,
+                              model_times <= end_time)
+        valid_model_times = model_times[mask]
+        if times is None:
+            times = valid_model_times
+        else:
+            if not np.all(valid_model_times == times):
+                raise RuntimeError('models do not have same timepoints')
+
+        masked_models[i]['time'] = valid_model_times
+
+    return times, masked_models
 
 
 def get_model_lags(model):
@@ -198,7 +233,8 @@ def get_affiliations_at_time(model, t):
     return affiliations[:, pos].ravel()
 
 
-def get_indicator_value(index_name, index_phase, index_lag, current_indices):
+def get_indicator_value(index_name, index_phase, index_lag, current_indices,
+                        zero_positive=False):
     if index_name not in current_indices:
         raise ValueError('data for index %s not found' % index_name)
 
@@ -207,7 +243,13 @@ def get_indicator_value(index_name, index_phase, index_lag, current_indices):
 
     lagged_value = current_indices[index_name][-index_lag]
 
-    if np.sign(lagged_value) == np.sign(index_phase):
+    lagged_sign = np.sign(lagged_value)
+    if lagged_sign == 0 and zero_positive:
+        lagged_sign = 1
+    elif lagged_sign == 0:
+        lagged_sign = -1
+
+    if lagged_sign == np.sign(index_phase):
         return 1
     else:
         return 0
@@ -314,7 +356,7 @@ def to_categorical_values(data, zero_positive=False):
 
 
 def get_predictor_values(predictor_name, categorical_values, start_index):
-    involved_indices = parse_predictor_name(p)
+    involved_indices = parse_predictor_name(predictor_name)
     for index in involved_indices:
         if index[0] not in categorical_values:
             raise RuntimeError('no data found for index %s' % index[0])
@@ -322,8 +364,8 @@ def get_predictor_values(predictor_name, categorical_values, start_index):
     n_samples = np.size(categorical_values[involved_indices[0][0]])
 
     predictor_values = []
-    for i in range(start_index, n_samples - 1):
-        current_indices = {f: categorical_values[:i + 1]
+    for i in range(start_index, n_samples):
+        current_indices = {f: categorical_values[f][:i]
                            for f in categorical_values}
         value = get_predictor_value(predictor_name, current_indices)
         predictor_values.append(value)
@@ -333,6 +375,9 @@ def get_predictor_values(predictor_name, categorical_values, start_index):
 
 def generate_fit_inputs(model, times, categorical_values):
     lags = get_model_lags(model)
+    if not lags:
+        lags = [0]
+
     max_lag = np.max(lags)
     n_lags = np.size(lags)
     outcome = model['outcome']
@@ -456,9 +501,19 @@ def summarise_models(bootstrapped_models, alpha=0.05):
         n_models = len(bootstrapped_models[f])
 
         summarised_models[f] = dict(
-            outcome=f, max_tv_norm=bootstrapped_models[f][0]['max_tv_norm'],
+            outcome=f,
+            max_tv_norm=bootstrapped_models[f][0]['max_tv_norm'],
             regularization=bootstrapped_models[f][0]['regularization'],
             n_components=bootstrapped_models[f][0]['n_components'],
+            n_init=bootstrapped_models[f][0]['n_init'],
+            init=bootstrapped_models[f][0]['init'],
+            tolerance=bootstrapped_models[f][0]['tolerance'],
+            parameters_tolerance=bootstrapped_models[f][0]['parameters_tolerance'],
+            max_iterations=bootstrapped_models[f][0]['max_iterations'],
+            parameters_initialization=bootstrapped_models[f][0]['parameters_initialization'],
+            max_parameters_iterations=bootstrapped_models[f][0]['max_parameters_iterations'],
+            max_affiliations_iterations=bootstrapped_models[f][0]['max_affiliations_iterations'],
+            random_seed=bootstrapped_models[f][0]['random_seed'],
             time=bootstrapped_models[f][0]['time'])
 
         log_like = []
@@ -484,7 +539,7 @@ def summarise_models(bootstrapped_models, alpha=0.05):
             for i, c in enumerate(bootstrapped_models[f][i]['components']):
                 predictor_names = [p for p in c]
                 for p in predictor_names:
-                    if len(c[p] > 1):
+                    if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
@@ -493,8 +548,8 @@ def summarise_models(bootstrapped_models, alpha=0.05):
             affiliations[:, :, i] = bootstrapped_models[f][i]['affiliations']
 
         tail_area = 0.5 * alpha
-        lower_index = int(np.floor(tail_area * n_models))
-        upper_index = int(np.ceil((1 - tail_area) * n_models))
+        lower_index = max(0, int(np.floor(tail_area * n_models)))
+        upper_index = min(int(np.ceil((1 - tail_area) * n_models)), n_models - 1)
 
         log_like = np.sort(np.asarray(log_like))
         cost = np.sort(np.asarray(cost))
@@ -513,7 +568,7 @@ def summarise_models(bootstrapped_models, alpha=0.05):
         for i, c in enumerate(components):
             predictor_names = [p for p in c]
             for p in predictor_names:
-                predictor_coeffs = np.asarray(components[i][p])
+                predictor_coeffs = np.sort(np.asarray(components[i][p]))
                 mean_coeff = np.mean(predictor_coeffs)
                 lower_bnd = predictor_coeffs[lower_index]
                 upper_bnd = predictor_coeffs[upper_index]
@@ -521,7 +576,7 @@ def summarise_models(bootstrapped_models, alpha=0.05):
 
         summarised_models[f]['components'] = components
 
-        affiliations = np.sort(affiliations)
+        affiliations = np.sort(affiliations, axis=-1)
         affiliations_bnds = np.empty((n_components, n_samples, 3))
         affiliations_bnds[:, :, 0] = np.mean(affiliations, axis=-1)
         affiliations_bnds[:, :, 1] = affiliations[:, :, lower_index]
@@ -557,7 +612,7 @@ def main():
     models = read_models(args.models_db)
 
     index_names = get_required_index_names(models)
-    model_times = get_simulation_times(models)
+    model_times, models = get_simulation_times(models)
     max_lag = get_maximum_lag(models)
 
     time_step = model_times[1] - model_times[0]
@@ -586,6 +641,27 @@ def main():
             model_times, model_outcomes, model_predictors, model_predictor_names  = \
                 generate_fit_inputs(model, simulated_times, categorical_values)
 
+            if model['parameters_initialization'] == 'Uniform':
+                parameters_initialization = pypbn.Uniform
+            elif model['parameters_initialization'] == 'Random':
+                parameters_initialization = pypbn.Random
+            elif model['parameters_initialization'] == 'Current':
+                parameters_initialization = pypbn.Current
+            else:
+                raise ValueError('invalid initialization %r' %
+                                 model['parameters_initialization'])
+
+            attrs = dict(n_components=model['n_components'],
+                         n_init=model['n_init'],
+                         init=model['init'],
+                         tolerance=model['tolerance'],
+                         parameters_tolerance=model['parameters_tolerance'],
+                         max_iterations=model['max_iterations'],
+                         parameters_initialization=model['parameters_initialization'],
+                         max_parameters_iterations=model['max_parameters_iterations'],
+                         max_affiliations_iterations=model['max_affiliations_iterations'],
+                         random_seed=model['random_seed'])
+
             fit_result = run_fembv_linear_fit(
                 model_outcomes, model_predictors,
                 n_components=model['n_components'],
@@ -595,6 +671,7 @@ def main():
                 init=model['init'],
                 tolerance=model['tolerance'],
                 parameters_tolerance=model['parameters_tolerance'],
+                parameters_initialization=parameters_initialization,
                 max_iterations=model['max_iterations'],
                 max_parameters_iterations=model['max_parameters_iterations'],
                 max_affiliations_iterations=model['max_affiliations_iterations'],
@@ -613,10 +690,13 @@ def main():
     if args.output_db:
         with shelve.open(args.output_db) as db:
             for f in summarised_models:
-                if f in db:
-                    db[f] += summarised_models[f]
-                else:
+                if isinstance(summarised_models[f], dict):
                     db[f] = summarised_models[f]
+                else:
+                    if f in db:
+                        db[f] += summarised_models[f]
+                    else:
+                        db[f] = summarised_models[f]
 
 
 if __name__ == '__main__':
