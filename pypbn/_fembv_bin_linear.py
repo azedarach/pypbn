@@ -162,7 +162,7 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                 msg = (msg + '(max_tv_norm={:.3e}, epsilon={:.3e},'.format(
                     max_tv_norm, epsilon) +
                        ' old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e})'.format(
-                           old_cold, new_cost, new_cost - old_cost))
+                           old_cost, new_cost, new_cost - old_cost))
                 if require_monotonic_cost:
                     raise RuntimeError(msg)
                 else:
@@ -179,7 +179,7 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                 msg = (msg + '(max_tv_norm={:.3e}, epsilon={:.3e},'.format(
                     max_tv_norm, epsilon) +
                        ' old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e})'.format(
-                           old_cold, new_cost, new_cost - old_cost))
+                           old_cost, new_cost, new_cost - old_cost))
                 if require_monotonic_cost_decrease:
                     raise RuntimeError(msg)
                 else:
