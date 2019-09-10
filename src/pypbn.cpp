@@ -85,6 +85,7 @@ PYBIND11_MODULE(pypbn_ext, m) {
       .def("get_affiliations", &FEMH1BinLinearMH::get_affiliations,
            py::return_value_policy::copy)
       .def("get_log_likelihood", &FEMH1BinLinearMH::get_log_likelihood)
+      .def("get_log_posterior", &FEMH1BinLinearMH::get_log_posterior)
       .def("reset", &FEMH1BinLinearMH::reset)
       .def("get_affiliations_acceptance_rate",
            &FEMH1BinLinearMH::get_affiliations_acceptance_rate)
@@ -115,6 +116,7 @@ PYBIND11_MODULE(pypbn_ext, m) {
       .def("get_affiliations", &FEMH1BinLinearHMC::get_affiliations,
            py::return_value_policy::copy)
       .def("get_log_likelihood", &FEMH1BinLinearHMC::get_log_likelihood)
+      .def("get_log_posterior", &FEMH1BinLinearHMC::get_log_posterior)
       .def("reset", &FEMH1BinLinearHMC::reset)
       .def("get_acceptance_rate", &FEMH1BinLinearHMC::get_acceptance_rate);
 }

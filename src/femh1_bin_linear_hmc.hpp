@@ -25,6 +25,7 @@ public:
    Eigen::MatrixXd get_parameters() const;
    Eigen::MatrixXd get_affiliations() const;
    double get_log_likelihood() const;
+   double get_log_posterior() const;
 
    bool hmc_step();
    void reset();

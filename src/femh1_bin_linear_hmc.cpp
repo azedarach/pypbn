@@ -355,4 +355,11 @@ double FEMH1BinLinearHMC::get_log_likelihood() const
       outcomes, predictors, models, log_affiliations);
 }
 
+double FEMH1BinLinearHMC::get_log_posterior() const
+{
+   return log_target_density(
+      outcomes, predictors, models, log_affiliations,
+      parameters_prior, softmax_affiliations_prior);
+}
+
 } // namespace pypbn

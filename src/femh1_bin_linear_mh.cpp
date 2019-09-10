@@ -324,6 +324,13 @@ double FEMH1BinLinearMH::get_log_likelihood() const
       outcomes, predictors, models, log_affiliations);
 }
 
+double FEMH1BinLinearMH::get_log_posterior() const
+{
+   return log_target_density(
+      outcomes, predictors, models, log_affiliations,
+      parameters_prior, softmax_affiliations_prior);
+}
+
 double FEMH1BinLinearMH::get_model_acceptance_rate(int i) const
 {
    const int n_components = models.size();
