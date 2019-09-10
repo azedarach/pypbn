@@ -12,6 +12,37 @@ from sklearn.utils import check_random_state
 from pypbn import FEMBVBinLinear
 
 
+DEFAULT_YEAR_FIELD = 'year'
+DEFAULT_MONTH_FIELD = 'month'
+DEFAULT_DAY_FIELD = 'day'
+DEFAULT_DUMMY_DAY = 1
+
+
+def read_data(csv_file, year_field=DEFAULT_YEAR_FIELD,
+              month_field=DEFAULT_MONTH_FIELD,
+              day_field=DEFAULT_DAY_FIELD,
+              dummy_day=DEFAULT_DUMMY_DAY):
+    data = np.genfromtxt(csv_file, delimiter=',', names=True)
+
+    years = np.array(data[year_field], dtype='i8')
+    months = np.array(data[month_field], dtype='i8')
+    if day_field in data.dtype.names:
+        is_daily_data = True
+        days = np.array(data[day_field], dtype='i8')
+    else:
+        is_daily_data = False
+        days = np.full(years.shape, dummy_day, dtype='i8')
+
+    times = np.array([datetime.datetime(years[i], months[i], days[i])
+                      for i in range(np.size(years))])
+
+    fields = [f for f in data.dtype.names
+              if f not in (year_field, month_field, day_field)]
+    values = {f: np.array(data[f]) for f in fields}
+
+    return times, values, is_daily_data
+
+
 def calculate_bic(log_likelihood, n_pars, n_samples):
     bic = -2 * log_likelihood + n_pars * (np.log(n_samples) - np.log(2 * pi))
     return bic
@@ -536,20 +567,21 @@ def summarise_models(bootstrapped_models, alpha=0.05):
             n_iter.append(bootstrapped_models[f][i]['n_iter'])
             runtime.append(bootstrapped_models[f][i]['runtime'])
 
-            for i, c in enumerate(bootstrapped_models[f][i]['components']):
+            for j, c in enumerate(bootstrapped_models[f][i]['components']):
                 predictor_names = [p for p in c]
                 for p in predictor_names:
                     if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
-                    components[i][p].append(theta)
+                    components[j][p].append(theta)
 
             affiliations[:, :, i] = bootstrapped_models[f][i]['affiliations']
 
         tail_area = 0.5 * alpha
         lower_index = max(0, int(np.floor(tail_area * n_models)))
-        upper_index = min(int(np.ceil((1 - tail_area) * n_models)), n_models - 1)
+        upper_index = min(int(np.ceil((1 - tail_area) * n_models)),
+                          n_models - 1)
 
         log_like = np.sort(np.asarray(log_like))
         cost = np.sort(np.asarray(cost))
@@ -598,6 +630,9 @@ def parse_cmd_line_args():
                         type=int, help='number of bootstrap samples')
     parser.add_argument('--random-seed', dest='random_seed', default=None,
                         type=int, help='random seed to use')
+    parser.add_argument('--sanity-check', dest='sanity_check',
+                        action='store_true',
+                        help='perform sanity check by running on original data')
 
     args = parser.parse_args()
 
@@ -621,16 +656,23 @@ def main():
     else:
         is_daily = True
 
+    if args.sanity_check:
+        input_csv_file = models[0]['input_file']
+
     bootstrapped_models = {m['outcome']: [] for m in models}
     for i in range(args.n_bootstrap):
-        simulated_times, simulated_indices = generate_initial_conditions(
-            index_names, model_times[0], max_lag, is_daily=is_daily,
-            random_state=random_state)
+        if not args.sanity_check:
+            simulated_times, simulated_indices = generate_initial_conditions(
+                index_names, model_times[0], max_lag, is_daily=is_daily,
+                random_state=random_state)
 
-        simulated_times, simulated_indices = simulate_indices(
-            models, initial_times=simulated_times,
-            initial_indices=simulated_indices,
-            is_daily=is_daily, random_state=random_state)
+            simulated_times, simulated_indices = simulate_indices(
+                models, initial_times=simulated_times,
+                initial_indices=simulated_indices,
+                is_daily=is_daily, random_state=random_state)
+
+        else:
+            simulated_times, simulated_indices, _ = read_data(input_csv_file)
 
         categorical_values = to_categorical_values(simulated_indices)
 
