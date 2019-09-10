@@ -74,7 +74,7 @@ def get_best_model(models, criterion='bic', threshold=5e-8, cluster_bic=True):
             if model['cost'] < best_model['cost']:
                 best_model = model
         elif criterion == 'bic':
-            best_model_bic = get_model_bic(model, threshold=threshold,
+            best_model_bic = get_model_bic(best_model, threshold=threshold,
                                            cluster_bic=cluster_bic)
             model_bic = get_model_bic(model, threshold=threshold,
                                       cluster_bic=cluster_bic)
