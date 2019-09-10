@@ -4,6 +4,7 @@ import numpy as np
 import re
 import shelve
 
+from math import pi
 from sklearn.utils import check_random_state
 
 
@@ -28,7 +29,7 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
             for c in components:
                 predictor_names = [p for p in c]
                 for p in predictor_names:
-                    if len(c[p] > 1):
+                    if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
@@ -45,7 +46,7 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
             for c in components:
                 predictor_names = [p for p in c]
                 for p in predictor_names:
-                    if len(c[p] > 1):
+                    if len(c[p]) > 1:
                         theta = c[p][0]
                     else:
                         theta = c[p]
