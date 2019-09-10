@@ -525,10 +525,13 @@ def create_model_dict(outcome, max_tv_norm, regularization,
     return model
 
 
-def summarise_models(bootstrapped_models, alpha=0.05):
-    summarised_models = {f: None for f in bootstrapped_models}
+def summarise_models(original_models, bootstrapped_models):
+    outcomes = [m['outcome'] for m in original_models]
+    summarised_models = {f: None for f in outcomes}
 
-    for f in bootstrapped_models:
+    for i, f in enumerate(outcomes):
+        original_model = original_models[i]
+
         n_models = len(bootstrapped_models[f])
 
         summarised_models[f] = dict(
@@ -547,27 +550,34 @@ def summarise_models(bootstrapped_models, alpha=0.05):
             random_seed=bootstrapped_models[f][0]['random_seed'],
             time=bootstrapped_models[f][0]['time'])
 
-        log_like = []
-        cost = []
-        n_iter = []
-        runtime = []
+        log_like = [original_model['log_likelihood_bound']]
+        cost = [original_model['cost']]
+        n_iter = [original_model['n_iter']]
+        runtime = [original_model['runtime']]
 
         components = []
-        for c in bootstrapped_models[f][0]['components']:
+        for k, c in enumerate(original_model['components']):
             predictor_names = [p for p in c]
-            component = {p: [] for p in predictor_names}
+            component = {}
+            for p in predictor_names:
+                if len(c[p]) > 1:
+                    theta = c[p][0]
+                else:
+                    theta = c[p]
+                component[p] = [theta]
             components.append(component)
 
         n_components, n_samples = bootstrapped_models[f][0]['affiliations'].shape
-        affiliations = np.empty((n_components, n_samples, n_models))
+        affiliations = np.empty((n_components, n_samples, n_models + 1))
+        affiliations[:, :, 0] = original_model['affiliations']
 
-        for i in range(n_models):
-            log_like.append(bootstrapped_models[f][i]['log_likelihood_bound'])
-            cost.append(bootstrapped_models[f][i]['cost'])
-            n_iter.append(bootstrapped_models[f][i]['n_iter'])
-            runtime.append(bootstrapped_models[f][i]['runtime'])
+        for model_index in range(n_models):
+            log_like.append(bootstrapped_models[f][model_index]['log_likelihood_bound'])
+            cost.append(bootstrapped_models[f][model_index]['cost'])
+            n_iter.append(bootstrapped_models[f][model_index]['n_iter'])
+            runtime.append(bootstrapped_models[f][model_index]['runtime'])
 
-            for j, c in enumerate(bootstrapped_models[f][i]['components']):
+            for j, c in enumerate(bootstrapped_models[f][model_index]['components']):
                 predictor_names = [p for p in c]
                 for p in predictor_names:
                     if len(c[p]) > 1:
@@ -576,45 +586,19 @@ def summarise_models(bootstrapped_models, alpha=0.05):
                         theta = c[p]
                     components[j][p].append(theta)
 
-            affiliations[:, :, i] = bootstrapped_models[f][i]['affiliations']
+            affiliations[:, :, model_index + 1] = bootstrapped_models[f][model_index]['affiliations']
 
-        tail_area = 0.5 * alpha
-        lower_index = max(0, int(np.floor(tail_area * n_models)))
-        upper_index = min(int(np.ceil((1 - tail_area) * n_models)),
-                          n_models - 1)
+        log_like = np.asarray(log_like)
+        cost = np.asarray(cost)
+        n_iter = np.asarray(n_iter)
+        runtime = np.asarray(runtime)
 
-        log_like = np.sort(np.asarray(log_like))
-        cost = np.sort(np.asarray(cost))
-        n_iter = np.sort(np.asarray(n_iter))
-        runtime = np.sort(np.asarray(runtime))
-
-        summarised_models[f]['log_likelihood_bound'] = (
-            np.mean(log_like), log_like[lower_index], log_like[upper_index])
-        summarised_models[f]['cost'] = (
-            np.mean(cost), cost[lower_index], cost[upper_index])
-        summarised_models[f]['n_iter'] = (
-            np.mean(n_iter), n_iter[lower_index], n_iter[upper_index])
-        summarised_models[f]['runtime'] = (
-            np.mean(runtime), runtime[lower_index], runtime[upper_index])
-
-        for i, c in enumerate(components):
-            predictor_names = [p for p in c]
-            for p in predictor_names:
-                predictor_coeffs = np.sort(np.asarray(components[i][p]))
-                mean_coeff = np.mean(predictor_coeffs)
-                lower_bnd = predictor_coeffs[lower_index]
-                upper_bnd = predictor_coeffs[upper_index]
-                components[i][p] = (mean_coeff, lower_bnd, upper_bnd)
-
+        summarised_models[f]['log_likelihood_bound'] = log_like
+        summarised_models[f]['cost'] = cost
+        summarised_models[f]['n_iter'] = n_iter
+        summarised_models[f]['runtime'] = runtime
         summarised_models[f]['components'] = components
-
-        affiliations = np.sort(affiliations, axis=-1)
-        affiliations_bnds = np.empty((n_components, n_samples, 3))
-        affiliations_bnds[:, :, 0] = np.mean(affiliations, axis=-1)
-        affiliations_bnds[:, :, 1] = affiliations[:, :, lower_index]
-        affiliations_bnds[:, :, 2] = affiliations[:, :, upper_index]
-
-        summarised_models[f]['affiliations'] = affiliations_bnds
+        summarised_models[f]['affiliations'] = affiliations
 
     return summarised_models
 
@@ -727,7 +711,7 @@ def main():
 
             bootstrapped_models[model['outcome']].append(fitted_model)
 
-    summarised_models = summarise_models(bootstrapped_models)
+    summarised_models = summarise_models(models, bootstrapped_models)
 
     if args.output_db:
         with shelve.open(args.output_db) as db:
