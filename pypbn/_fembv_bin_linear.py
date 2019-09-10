@@ -163,7 +163,7 @@ def _iterate_fembv_bin_linear(Y, X, parameters, affiliations,
                     max_tv_norm, epsilon) +
                        ' old_cost={:.3e}, new_cost={:.3e}, cost_delta={:.3e})'.format(
                            old_cost, new_cost, new_cost - old_cost))
-                if require_monotonic_cost:
+                if require_monotonic_cost_decrease:
                     raise RuntimeError(msg)
                 else:
                     warnings.warn(msg, UserWarning)
