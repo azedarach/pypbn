@@ -125,11 +125,37 @@ def get_required_index_names(models):
 
 def get_simulation_times(models):
     n_models = len(models)
-    times = models[0]['time']
-    for i in range(1, n_models):
-        if not np.all(models[i]['time'] == times):
-            raise RuntimeError('times do not match in all models')
-    return times
+
+    start_time = None
+    end_time = None
+
+    for i in range(n_models):
+        model_start_time = np.min(models[i]['time'])
+        model_end_time = np.max(models[i]['time'])
+
+        if start_time is None or model_start_time > start_time:
+            start_time = model_start_time
+
+        if end_time is None or model_end_time < end_time:
+            end_time = model_end_time
+
+    times = None
+    masked_models = models.copy()
+
+    for i in range(n_models):
+        model_times = models[i]['time']
+        mask = np.logical_and(model_times >= start_time,
+                              model_times <= end_time)
+        valid_model_times = model_times[mask]
+        if times is None:
+            times = valid_model_times
+        else:
+            if not np.all(valid_model_times == times):
+                raise RuntimeError('models do not have same timepoints')
+
+        masked_models[i]['time'] = valid_model_times
+
+    return times, masked_models
 
 
 def get_maximum_lag(models):
@@ -189,7 +215,8 @@ def get_affiliations_at_time(model, t):
     return affiliations[:, pos].ravel()
 
 
-def get_indicator_value(index_name, index_phase, index_lag, current_indices):
+def get_indicator_value(index_name, index_phase, index_lag, current_indices,
+                        zero_positive=False):
     if index_name not in current_indices:
         raise ValueError('data for index %s not found' % index_name)
 
@@ -198,7 +225,13 @@ def get_indicator_value(index_name, index_phase, index_lag, current_indices):
 
     lagged_value = current_indices[index_name][-index_lag]
 
-    if np.sign(lagged_value) == np.sign(index_phase):
+    lagged_sign = np.sign(lagged_value)
+    if lagged_sign == 0 and zero_positive:
+        lagged_sign = 1
+    elif lagged_sign == 0:
+        lagged_sign = -1
+
+    if lagged_sign == np.sign(index_phase):
         return 1
     else:
         return 0
@@ -369,7 +402,7 @@ def main():
     models = read_models(args.models_db)
 
     index_names = get_required_index_names(models)
-    model_times = get_simulation_times(models)
+    model_times, models = get_simulation_times(models)
     max_lag = get_maximum_lag(models)
 
     time_step = model_times[1] - model_times[0]
