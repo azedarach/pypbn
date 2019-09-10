@@ -58,12 +58,16 @@ def to_categorical_values(data, zero_positive=False):
 
 def generate_fit_inputs(times, categorical_values, lags=None,
                         double_indicators=False):
-    if lags is None or not lags:
+    nonzero_lags = []
+    if lags is not None and lags:
+        nonzero_lags = [l for l in lags if l != 0]
+
+    if not nonzero_lags:
         max_lag = 0
         n_lags = 0
     else:
-        max_lag = np.max(lags)
-        n_lags = np.size(lags)
+        max_lag = np.max(nonzero_lags)
+        n_lags = np.size(nonzero_lags)
 
     lagged_times = times[max_lag:]
 
@@ -74,7 +78,7 @@ def generate_fit_inputs(times, categorical_values, lags=None,
     n_samples = lagged_times.shape[0]
     n_features = len(lagged_outcomes)
 
-    if lags is None or not lags:
+    if not nonzero_lags or n_lags == 0:
         # intercept term only
         predictors = np.ones((1, n_samples), dtype='i8')
         predictor_names = ['unresolved']
@@ -96,9 +100,8 @@ def generate_fit_inputs(times, categorical_values, lags=None,
             predictors = np.zeros((n_predictors, n_samples), dtype='i8')
             index = 0
 
-        for lag in lags:
-            if lag == 0:
-                continue
+        sorted_lags = sorted(nonzero_lags)
+        for lag in sorted_lags:
             for i, f in enumerate(fields):
                 lagged_field = categorical_values[f][max_lag - lag:-lag]
                 if double_indicators:
