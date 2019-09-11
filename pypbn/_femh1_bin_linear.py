@@ -250,7 +250,7 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
                 np.max(model_acceptance_rates), average_time))
 
     return (parameters_chain, affiliations_chain, log_like_chain,
-            log_posterior_chain
+            log_posterior_chain,
             affiliations_acceptance_rate_chain,
             model_acceptance_rates_chain,
             update_success)
@@ -379,7 +379,7 @@ class FEMH1BinLinearMC(object):
             chain_length=self.chain_length,
             max_parameters_iterations=self.max_parameters_iterations,
             verbose=self.verbose, random_seed=self.random_seed,
-            random_state=self.random_state)[:3]
+            random_state=self.random_state)
 
         self.parameters_chain_ = result[0]
         self.n_components_ = self.parameters_chain_.shape[1]
