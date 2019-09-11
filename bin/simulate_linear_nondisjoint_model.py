@@ -65,6 +65,9 @@ def get_model_bic(model, threshold=5e-8, cluster_bic=True):
 def get_best_model(models, criterion='bic', threshold=5e-8, cluster_bic=True):
     best_model = None
 
+    if isinstance(models, dict):
+        return models
+
     for model in models:
         if best_model is None:
             best_model = model
