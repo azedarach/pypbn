@@ -227,15 +227,15 @@ def _fit_femh1_bin_linear_metropolis(Y, X, parameters, affiliations,
         average_time = ((step_time + n_steps * average_time) /
                         (n_steps + 1))
 
-        parameters = stepper.get_parameters()
-        affiliations = stepper.get_affiliations()
+        current_parameters = stepper.get_parameters()
+        current_affiliations = stepper.get_affiliations()
         log_like = stepper.get_log_likelihood()
         log_posterior = stepper.get_log_posterior()
 
         parameters_chain[n_steps] = current_parameters
         affiliations_chain[n_steps] = current_affiliations
         log_like_chain[n_steps] = log_like
-        log_posterion_chain[n_steps] = log_posterior
+        log_posterior_chain[n_steps] = log_posterior
 
         affiliations_acceptance_rate = stepper.get_affiliations_acceptance_rate()
         model_acceptance_rates = stepper.get_model_acceptance_rates()
