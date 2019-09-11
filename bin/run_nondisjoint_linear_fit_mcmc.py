@@ -60,12 +60,16 @@ def to_categorical_values(data, zero_positive=False):
 
 def generate_fit_inputs(times, categorical_values, lags=None,
                         double_indicators=False):
-    if lags is None or not lags:
+    nonzero_lags = []
+    if lags is not None and lags:
+        nonzero_lags = [l for l in lags if l != 0]
+
+    if not nonzero_lags:
         max_lag = 0
         n_lags = 0
     else:
-        max_lag = np.max(lags)
-        n_lags = np.size(lags)
+        max_lag = np.max(nonzero_lags)
+        n_lags = np.size(nonzero_lags)
 
     lagged_times = times[max_lag:]
 
@@ -76,7 +80,7 @@ def generate_fit_inputs(times, categorical_values, lags=None,
     n_samples = lagged_times.shape[0]
     n_features = len(lagged_outcomes)
 
-    if lags is None or not lags:
+    if not nonzero_lags or n_lags == 0:
         # intercept term only
         predictors = np.ones((1, n_samples), dtype='i8')
         predictor_names = ['unresolved']
@@ -98,9 +102,8 @@ def generate_fit_inputs(times, categorical_values, lags=None,
             predictors = np.zeros((n_predictors, n_samples), dtype='i8')
             index = 0
 
-        for lag in lags:
-            if lag == 0:
-                continue
+        sorted_lags = sorted(nonzero_lags)
+        for lag in sorted_lags:
             for i, f in enumerate(fields):
                 lagged_field = categorical_values[f][max_lag - lag:-lag]
                 if double_indicators:
@@ -118,60 +121,79 @@ def generate_fit_inputs(times, categorical_values, lags=None,
     return lagged_times, lagged_outcomes, predictors, predictor_names
 
 
-def calculate_within_chain_moments(parameters_batch, affiliations_batch):
-    n_components = parameters_batch.shape[-2]
-    n_features = parameters_batch.shape[-1]
-    n_samples = affiliations_batch.shape[-1]
+def calculate_within_chain_moments(batch):
+    n_chains = batch.shape[0]
+    target_shape = batch.shape[2:]
+    n_variables = np.product(target_shape)
 
-    parameters_within_chain_means = np.mean(parameters_batch, axis=1)
-    parameters_within_chain_vars = np.var(parameters_batch, axis=1, ddof=1)
-
-    affiliations_within_chain_means = np.mean(affiliations_batch, axis=1)
-    affiliations_within_chain_vars = np.var(affiliations_batch, axis=1, ddof=1)
+    within_chain_means = np.mean(batch, axis=1)
+    within_chain_vars = np.var(batch, axis=1, ddof=1)
 
     # variances and covariances necessary for estimating degrees of freedom
-    parameters_var_var = np.var(
-        parameters_within_chain_vars, axis=0, ddof=1)
-    affiliations_var_var = np.var(
-        affiliations_within_chain_vars, axis=0, ddof=1)
+    var_var = np.var(within_chain_vars, axis=0, ddof=1)
+    var_mean_sq_cov = np.empty(target_shape)
+    var_mean_cov = np.empty(target_shape)
 
-    parameters_var_mean_sq_cov = np.empty((n_components, n_features))
-    parameters_var_mean_cov = np.empty((n_components, n_features))
+    flat_within_chain_means = np.reshape(within_chain_means,
+                                         (n_chains, n_variables))
+    flat_within_chain_vars = np.reshape(within_chain_vars,
+                                        (n_chains, n_variables))
 
-    for j in range(n_components):
-        for k in range(n_features):
-            parameters_var_mean_sq_cov[j, k] = np.cov(
-                parameters_within_chain_vars[:, j, k],
-                parameters_within_chain_means[:, j, k] **2,
-                ddof=1)
-            parameters_var_mean_cov[j, k] = np.cov(
-                parameters_within_chain_vars[:, j, k],
-                parameters_within_chain_means[:, j, k],
-                ddof=1)
+    flat_var_mean_sq_cov = np.empty((n_variables,))
+    flat_var_mean_cov = np.empty((n_variables,))
 
-    affiliations_var_mean_sq_cov = np.empty((n_components, n_samples))
-    affiliations_var_mean_cov = np.empty((n_components, n_samples))
-    for j in range(n_components):
-        for k in range(n_samples):
-            affiliations_var_mean_sq_cov[j, k] = np.cov(
-                affiliations_within_chain_vars[:, j, k],
-                affiliations_within_chain_means[:, j, k] ** 2,
-                ddof=1)
-            affiliations_var_mean_cov[j, k] = np.cov(
-                affiliations_within_chain_vars[:, j, k],
-                affiliations_chain_means[:, j, k],
-                ddof=1)
+    for i in range(n_variables):
+        flat_var_mean_sq_cov[i] = np.cov(
+            flat_within_chain_vars[:, i],
+            flat_within_chain_means[:, i] ** 2, ddof=1)[0, 1]
+        flat_var_mean_cov[i] = np.cov(
+            flat_within_chain_vars[:, i],
+            flat_within_chain_means[:, i], ddof=1)[0, 1]
 
-    return dict(parameters_within_chain_means=parameters_within_chain_means,
-                parameters_within_chain_vars=parameters_within_chain_vars,
-                affiliations_within_chain_means=affiliations_within_chain_means,
-                affiliations_within_chain_vars=affiliations_within_chain_vars,
-                parameters_var_var=parameters_var_var,
-                parameters_var_mean_sq_cov=parameters_var_mean_sq_cov,
-                parameters_var_mean_cov=parameters_var_mean_cov,
-                affiliations_var_var=affiliations_var_var,
-                affiliations_var_mean_sq_cov=affiliations_var_mean_sq_cov,
-                affiliations_var_mean_cov=affiliations_var_mean_cov)
+    var_mean_sq_cov = np.reshape(flat_var_mean_sq_cov, target_shape)
+    var_mean_cov = np.reshape(flat_var_mean_cov, target_shape)
+
+    return dict(within_chain_means=within_chain_means,
+                within_chain_vars=within_chain_vars,
+                var_var=var_var, var_mean_sq_cov=var_mean_sq_cov,
+                var_mean_cov=var_mean_cov)
+
+
+def calculate_scale_reduction_factors(batch):
+    m = batch.shape[0] # number of chains
+    n = batch.shape[1] # batch size
+    target_shape = batch.shape[2:]
+
+    within_chain_moments = calculate_within_chain_moments(batch)
+    within_chain_means = within_chain_moments['within_chain_means']
+    combined_means = np.sum(np.sum(batch, axis=0), axis=0) / (n * m)
+
+    W = np.mean(within_chain_moments['within_chain_vars'], axis=0)
+
+    B_over_n = (
+        np.sum(
+            (within_chain_means -
+             combined_means[np.newaxis, :, :]) ** 2,
+            axis=0) / (m - 1))
+
+    sigma_hat = (n - 1) * W / n + B_over_n
+
+    Vhat = sigma_hat + B_over_n / m
+
+    var_Vhat = (
+        ((n - 1.0) / n) ** 2 * within_chain_moments['var_var'] / m +
+        2 * ((m + 1.0) / m) ** 2 * B_over_n ** 2 / (m - 1.0) +
+        2 * ((m + 1.0) * (n - 1.0) / (m * n ** 2)) * n * (
+            within_chain_moments['var_mean_sq_cov'] -
+            2 * combined_means *
+            within_chain_moments['var_mean_cov']) / m)
+
+    dof = 2 * Vhat / var_Vhat
+
+    Rhat = Vhat / W
+    Rhatc = (dof + 3) * Rhat / (dof + 1)
+
+    return dict(W=W, Vhat=Vhat, Rhat=Rhat, dof=dof, Rhatc=Rhatc)
 
 
 def calculate_diagnostics(parameters_chains, affiliations_chains,
@@ -183,7 +205,7 @@ def calculate_diagnostics(parameters_chains, affiliations_chains,
     n_samples = affiliations_chains.shape[-1]
 
     if batch_size is None:
-        batch_size = 0.05 * burn_in_fraction * chain_length
+        batch_size = int(0.05 * burn_in_fraction * chain_length)
 
     n_batches = int(np.ceil(burn_in_fraction * chain_length / batch_size))
 
@@ -195,107 +217,50 @@ def calculate_diagnostics(parameters_chains, affiliations_chains,
         (n_batches, n_components, n_features), np.NaN)
     parameters_dof = np.full(
         (n_batches, n_components, n_features), np.NaN)
+    parameters_Rhatc = np.full(
+        (n_batches, n_components, n_features), np.NaN)
 
-    affiliations_W = np.full(
-        (n_batches, n_components, n_samples), np.NaN)
-    affiliations_Vhat = np.full(
-        (n_batches, n_components, n_samples), np.NaN)
-    affiliations_Rhat = np.full(
-        (n_batches, n_components, n_samples), np.NaN)
-    affiliations_dof = np.full(
-        (n_batches, n_components, n_samples), np.NaN)
+    if n_components > 1:
+        affiliations_W = np.full(
+            (n_batches, n_components, n_samples), np.NaN)
+        affiliations_Vhat = np.full(
+            (n_batches, n_components, n_samples), np.NaN)
+        affiliations_Rhat = np.full(
+            (n_batches, n_components, n_samples), np.NaN)
+        affiliations_dof = np.full(
+            (n_batches, n_components, n_samples), np.NaN)
+        affiliations_Rhatc = np.full(
+            (n_batches, n_components, n_samples), np.NaN)
+    else:
+        affiliations_W = None
+        affiliations_Vhat = None
+        affiliations_Rhat = None
+        affiliations_dof = None
+        affiliations_Rhatc = None
 
     start_pos = int(np.floor(burn_in_fraction * chain_length))
     for i in range(n_batches):
         end_pos = min(chain_length, start_pos + (i + 1) * batch_size)
 
         parameters_batch = parameters_chains[:, start_pos:end_pos, :, :]
-        affiliations_batch = affiliations_chains[:, start_pos:end_pos, :, :]
+        parameters_srf = calculate_scale_reduction_factors(parameters_batch)
+        parameters_W[i] = parameters_srf['W']
+        parameters_Vhat[i] = parameters_srf['Vhat']
+        parameters_Rhat[i] = parameters_srf['Rhat']
+        parameters_dof[i] = parameters_srf['dof']
+        parameters_Rhatc[i] = parameters_srf['Rhatc']
 
-        current_batch_size = parameters_batch.shape[1]
-
-        within_chain_moments = calculate_within_chain_moments(
-            parameters_batch, affiliations_batch)
-
-        parameters_within_chain_means = within_chain_moments[
-            'parameters_within_chain_means']
-        affiliations_within_chain_means = within_chain_moments[
-            'affiliations_within_chain_means']
-
-        parameters_W[i] = np.mean(
-            within_chain_moments['parameters_within_chain_vars'], axis=0)
-        affiliations_W[i] = np.mean(
-            within_chain_moments['affiliations_within_chain_vars'], axis=0)
-
-        parameters_combined_means = np.mean(parameters_batch, axis=[0, 1],
-                                            keepdims=True)
-        affiliations_combined_means = np.mean(affiliations_batch, axis=[0, 1],
-                                              keepdims=True)
-
-        parameters_mean_var = (
-            np.sum(
-                (parameters_within_chain_means -
-                 parameters_combined_means[np.newaxis, :, :]) ** 2,
-                axis=0) /
-            (n_chains - 1))
-        affiliations_mean_var = (
-            np.sum(
-                (affiliations_within_chain_means -
-                 affiliations_combined_means[np.newaxis, :, :]) ** 2,
-                axis=0) /
-            (n_chains - 1))
-
-        parameters_sigma_hat = (
-            (current_batch_size - 1) * parameters_W[i] /
-            current_batch_size + parameters_mean_var)
-        affiliations_sigma_hat = (
-            (current_batch_size - 1) * affiliations_W[i] /
-            current_batch_size + affiliations_mean_var)
-
-        parameters_Vhat[i] = (parameters_sigma_hat +
-                              parameters_mean_var / n_chains)
-        affiliations_Vhat[i] = (affiliations_sigma_hat +
-                                affiliations_mean_var / n_chains)
-
-        parameters_Rhat[i] = (parameters_Vhat[i] /
-                              parameters_W[i])
-        affiliations_Rhat[i] = (affiliations_Vhat[i] /
-            affiliations_W[i])
-
-        parameters_var_Vhat = (
-            ((current_batch_size - 1.0) / current_batch_size) ** 2 *
-            within_chain_moments['parameters_var_var'] / n_chains +
-            2 * ((n_chains + 1.0) / n_chains) ** 2 *
-            parameters_mean_var ** 2 / (n_chains - 1.0) +
-            2 * ((n_chains + 1.0) * (current_batch_size - 1.0) /
-                 (n_chains * current_batch_size ** 2)) *
-            current_batch_size * (
-                within_chain_moments['parameters_var_mean_sq_cov'] -
-                2 * parameters_combined_means *
-                within_chain_moments['parameters_var_mean_cov']) / n_chains)
-
-        affiliations_var_Vhat = (
-            ((current_batch_size - 1.0) / current_batch_size) ** 2 *
-            within_chain_moments['affiliations_var_var'] / n_chains +
-            2 * ((n_chains + 1.0) / n_chains) ** 2 *
-            affiliations_mean_var ** 2 / (n_chains - 1.0) +
-            2 * ((n_chains + 1.0) * (current_batch_size - 1.0) /
-                 (n_chains * current_batch_size ** 2)) *
-            current_batch_size * (
-                within_chain_moments['affiliations_var_mean_sq_cov'] -
-                2 * affiliations_combined_means *
-                within_chain_moments['affiliations_var_mean_cov']) / n_chains)
-
-        parameters_dof[i] = 2 * parameters_Vhat[i] / parameters_var_Vhat
-        affiliations_dof[i] = 2 * affiliations_Vhat[i] / affiliations_var_Vhat
+        if n_components > 1:
+            affiliations_batch = affiliations_chains[:, start_pos:end_pos, :, :]
+            affiliations_srf = calculate_scale_reduction_factors(affiliations_batch)
+            affiliations_W[i] = affiliations_srf['W']
+            affiliations_Vhat[i] = affiliations_srf['Vhat']
+            affiliations_Rhat[i] = affiliations_srf['Rhat']
+            affiliations_dof[i] = affiliations_srf['dof']
+            affiliations_Rhatc[i] = affiliations_srf['Rhatc']
 
         if end_pos >= chain_length:
             break
-
-    parameters_Rhatc = ((parameters_dof + 3) * parameters_Rhat /
-                        (parameters_dof + 1))
-    affiliations_Rhatc = ((affiliations_dof + 3) * affiliations_Rhat /
-                          (affiliations_dof + 1))
 
     return dict(parameters_W=parameters_W,
                 parameters_Vhat=parameters_Vhat,
@@ -331,7 +296,16 @@ def run_femh1_linear_mcmc(Y, X, n_components=None, n_chains=1,
         (n_chains, chain_length, n_components, n_features))
     log_likelihood_chains = np.empty(
         (n_chains, chain_length))
+    log_posterior_chains = np.empty(
+        (n_chains, chain_length))
     runtimes = np.empty((n_chains,))
+
+    if method == 'metropolis':
+        acceptance_rate_chains = np.empty(
+            (n_chains, chain_length, n_components + 1))
+    else:
+        acceptance_rate_chains = np.empty(
+            (n_chains, chain_length))
 
     success = False
     for i in range(n_chains):
@@ -355,6 +329,7 @@ def run_femh1_linear_mcmc(Y, X, n_components=None, n_chains=1,
         affiliations_chain = model.fit_transform(Y, X)
         parameters_chain = model.parameters_chain_
         log_likelihood_chain = model.log_likelihood_chain_
+        log_posterior_chain = model.log_posterior_chain_
 
         end_time = time.perf_counter()
 
@@ -363,18 +338,30 @@ def run_femh1_linear_mcmc(Y, X, n_components=None, n_chains=1,
         affiliations_chains[i] = affiliations_chain
         parameters_chains[i] = parameters_chain
         log_likelihood_chains[i] = log_likelihood_chain
+        log_posterior_chains[i] = log_posterior_chain
         runtimes[i] = runtime
+
+        if method == 'metropolis':
+            acceptance_rate_chains[i, :, 0] = model.affiliations_acceptance_rate_chain_
+            acceptance_rate_chains[i, :, 1:] = model.model_acceptance_rates_chain_
+        else:
+            acceptance_rate_chains[i] = model.acceptance_rate_chain_
 
         success = True
 
     if not success:
         raise RuntimeError('failed to fit FEM-H1 model')
 
-    diagnostics = calculate_diagnostics(parameters_chains, affiliations_chains)
+    if n_chains > 1:
+        diagnostics = calculate_diagnostics(parameters_chains, affiliations_chains)
+    else:
+        diagnostics = {}
 
     return dict(affiliations=affiliations_chains,
                 parameters=parameters_chains,
                 log_likelihood=log_likelihood_chains,
+                log_posterior=log_posterior_chains,
+                acceptance_rate=acceptance_rate_chains,
                 runtime=runtimes, diagnostics=diagnostics)
 
 
@@ -388,6 +375,8 @@ def create_model_dict(outcome, epsilon_gamma, epsilon_theta,
              'affiliations': fit_result['affiliations'].copy(),
              'time': times,
              'log_likelihood': fit_result['log_likelihood'],
+             'log_posterior': fit_result['log_posterior'],
+             'acceptance_rate': fit_result['acceptance_rate'],
              'runtime': fit_result['runtime']
              }
 
